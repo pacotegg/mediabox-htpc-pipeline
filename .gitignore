@@ -1,0 +1,61 @@
+# --- Repos aparte (tienen su propio git) ---
+/ScummVM-Manager/
+/WinKlean/
+
+# --- Herramientas de terceros (binarias, no son nuestro código) ---
+/DEE/
+/PgsToSrt/
+/bin/
+
+# --- Runtime / caché ---
+__pycache__/
+webpanel/__pycache__/
+*.pyc
+
+# --- Logs ---
+*.log
+
+# --- Backups manuales y carpetas de trabajo/descartes ---
+_backups/
+archivo/
+pruebas/
+atmos_audit/
+atmosenc/
+scripts.rar
+
+# --- Volcados de datos y estado generado por el propio pipeline (no son código fuente) ---
+*.jsonl
+aac_peores.txt
+aac_peores_full.txt
+aac_plan.txt
+aac_report.txt
+aac_report_full.txt
+ass_tracks.json
+ass_tracks.log
+audio_compat_estado.json
+audio_compat_lista.json
+audio_descartes.csv
+audio_plan.json
+audio_recap_estado.json
+audio_sobrado.txt
+fps_medido.json
+no_nativos.json
+no_nativos.log
+opensubtitles.json
+orden_pistas.json
+orden_scan.log
+peliculas_nota_baja.csv
+pelis_que_faltan.csv
+retrofit_dos.json
+retrofit_dos_estado.json
+retrofit_estado.json
+retrofit_fps.json
+retrofit_fps_estado.json
+retrofit_lista.json
+retrofit_portadas.json
+retrofit_portadas_estado.json
+reordenar_estado.json
+thrillers_que_faltan.md
+
+# --- Config local de Claude Code (permisos de esta máquina) ---
+.claude/settings.local.json

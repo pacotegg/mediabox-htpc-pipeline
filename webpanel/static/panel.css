@@ -1,0 +1,494 @@
+/* ==========================================================================
+   panel.css - el aspecto del panel de MediaBox.
+   ==========================================================================
+   Estaba INCRUSTADO en templates/index.html hasta el 31/08/2026: 145 KB en un
+   fichero que mezclaba tres lenguajes y era el mas incomodo de editar del
+   proyecto. La plantilla no llevaba ni una sola etiqueta de Jinja, asi que
+   sacar esto fuera no cambia nada de lo que se sirve.
+
+   SE CARGA CON ?v=<mtime> desde index.html. Eso NO es un adorno: la pagina se
+   sirve con Cache-Control no-store, pero un fichero estatico no, y sin la
+   marca el navegador serviria la version vieja despues de cada cambio -que es
+   justo la trampa que ya mordio con la plantilla cacheada-.
+   ========================================================================== */
+/* ── Design tokens ─────────────────────────────────────────────────────────── */
+:root{
+  --bg:#080910;--bg1:#0d0f1a;--bg2:#121520;--border:#1e2235;
+  --green:#00e87a;--green-dim:#00a855;--red:#ff3d5a;--amber:#ffaa00;
+  --blue:#4d7fff;--purple:#a78bfa;--cyan:#22d3ee;
+  /* Remux: color propio. No puede ser el cian que usa por dentro (botones y
+     barras), porque ese ya identifica a Sync en la barra de pestanas y las dos
+     quedaban iguales. Mismo registro neon que --purple y --cyan. */
+  --pink:#f472b6;
+  --text:#c8cfe8;--muted:#4a5070;--white:#eef0f8;
+  --mono:'JetBrains Mono',monospace;--sans:'Syne',sans-serif;
+
+  /* ── Profundidad y radios (31/08/2026) ───────────────────────────────────
+     LA LUZ VIENE DE ARRIBA. Es el truco que separa una interfaz oscura plana
+     de una que parece tener materia: una linea de 1 px clara en el borde
+     superior de cada superficie. Se pinta con un box-shadow INSET, que en un
+     elemento que no se mueve se pinta UNA vez y no cuesta nada por fotograma
+     -a diferencia de un box-shadow exterior sobre algo que se anima-.
+     --hair-hi  el filo iluminado de arriba
+     --hair-lo  la sombra de contacto de abajo, muy suave
+     --border-hi  borde al pasar por encima: el de reposo (#1e2235) es
+                  deliberadamente discreto y no sirve para marcar el foco. */
+  --hair-hi:rgba(255,255,255,.055);
+  --hair-lo:rgba(0,0,0,.30);
+  --border-hi:#2c3350;
+
+  /* ESCALA DE RADIOS. Habia ocho valores sueltos por el fichero (16,14,12,10,
+     8,5,4,3) sin criterio: mezclar radios parecidos es lo que hace que una
+     interfaz se vea improvisada aunque cada pieza este bien. Cuatro escalones,
+     y cada uno con un uso. */
+  --r-xl:16px;  /* modales y tarjetas grandes */
+  --r-lg:12px;  /* tarjetas de lista, bloques */
+  --r-md:9px;   /* botones, campos, celdas */
+  --r-sm:6px;   /* pildoras, insignias, controles pequenyos */
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:var(--mono);font-size:13px;min-height:100vh;}
+
+/* ── Header ────────────────────────────────────────────────────────────────── */
+header{
+  display:flex;align-items:center;gap:0;
+  border-bottom:1px solid var(--border);background:var(--bg1);
+  position:sticky;top:0;z-index:100;
+}
+.logo{font-family:var(--sans);font-weight:800;font-size:18px;letter-spacing:.1em;
+  color:var(--white);padding:0 24px;flex-shrink:0;border-right:1px solid var(--border);}
+.logo span{color:var(--green);}
+
+/* ── Tab bar ───────────────────────────────────────────────────────────────── */
+.tabs{display:flex;flex:1;overflow-x:auto;}
+.tab-btn{
+  font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.12em;
+  text-transform:uppercase;padding:18px 22px;background:transparent;border:none;
+  border-right:1px solid var(--border);color:var(--muted);cursor:pointer;
+  transition:color .2s ease,background-color .2s ease,border-color .2s ease;
+  white-space:nowrap;display:flex;align-items:center;gap:8px;
+  border-bottom:2px solid transparent;
+}
+.tab-btn:hover{color:var(--white);background:rgba(255,255,255,.03);}
+.tab-btn.active{color:var(--white);border-bottom-color:var(--green);}
+.tab-btn.active.tab-enc{border-bottom-color:var(--green);}
+.tab-btn.active.tab-sync{border-bottom-color:var(--cyan);}
+.tab-btn.active.tab-ytdlp{border-bottom-color:var(--blue);}
+.tab-btn.active.tab-audio{border-bottom-color:var(--purple);}
+.tab-btn.active.tab-subs{border-bottom-color:var(--amber);}
+.tab-btn.active.tab-remux{border-bottom-color:var(--pink);}
+.tab-dot{width:6px;height:6px;border-radius:50%;background:currentColor;opacity:0;transition:opacity .3s;}
+.tab-dot.on{opacity:1;animation:pulse 1.4s ease infinite;}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(.7)}}
+/* Barra indeterminada del remux: rayas en movimiento cuando no hay % fiable */
+.rmx-indet{background-image:linear-gradient(115deg,transparent 25%,rgba(0,0,0,.25) 25%,rgba(0,0,0,.25) 50%,transparent 50%,transparent 75%,rgba(0,0,0,.25) 75%);background-size:18px 18px;animation:rmxstripes 0.7s linear infinite}
+@keyframes rmxstripes{0%{background-position:0 0}100%{background-position:18px 0}}
+
+#conn{margin-left:auto;font-size:10px;letter-spacing:.1em;padding:0 20px;
+  color:var(--muted);white-space:nowrap;flex-shrink:0;}
+#conn.live{color:var(--green-dim);}
+#conn.dead{color:var(--red);}
+
+/* ── Tab panels ────────────────────────────────────────────────────────────── */
+.tab-panel{display:none;}
+.tab-panel.active{display:block;}
+main{padding:24px 32px;max-width:1600px;margin:0 auto;display:flex;flex-direction:column;gap:18px;}
+
+/* ── Common cards ──────────────────────────────────────────────────────────── */
+.card{background:var(--bg1);border:1px solid var(--border);border-radius:var(--r-xl);
+  padding:24px 28px;box-shadow:inset 0 1px 0 var(--hair-hi);}
+.card h2{font-family:var(--sans);font-size:12px;font-weight:700;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--white);margin-bottom:16px;}
+.progress-card{background:var(--bg1);border:1px solid var(--border);border-radius:var(--r-xl);
+  padding:28px 32px;position:relative;overflow:hidden;box-shadow:inset 0 1px 0 var(--hair-hi);}
+.progress-card::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;
+  opacity:0;transition:opacity .4s;}
+.progress-card.active::before{opacity:1;}
+.pc-enc::before{background:linear-gradient(90deg,transparent,var(--green),transparent);}
+.pc-ytdlp::before{background:linear-gradient(90deg,transparent,var(--blue),transparent);}
+.pc-ups::before{background:linear-gradient(90deg,transparent,var(--purple),transparent);}
+.pc-sync::before{background:linear-gradient(90deg,transparent,var(--cyan),transparent);}
+.pc-subs::before{background:linear-gradient(90deg,transparent,var(--amber),transparent);}
+
+/* ── Inputs / selects / buttons ────────────────────────────────────────────── */
+.file-row{display:flex;gap:10px;align-items:stretch;margin-bottom:12px;}
+.inp{flex:1;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r-md);
+  color:var(--white);font-family:var(--mono);font-size:13px;padding:11px 16px;
+  outline:none;transition:border-color .2s;}
+.inp:focus{border-color:var(--green);}
+.inp::placeholder{color:var(--muted);}
+.inp.blue:focus{border-color:var(--blue);}
+.inp.cyan:focus{border-color:var(--cyan);}
+.sel{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r-md);
+  color:var(--text);font-family:var(--mono);font-size:12px;padding:10px 12px;
+  outline:none;cursor:pointer;width:100%;}
+.sel:focus{border-color:var(--green);}
+
+.btn{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.12em;
+  text-transform:uppercase;padding:10px 20px;border-radius:var(--r-md);border:1px solid;
+  cursor:pointer;display:flex;align-items:center;gap:7px;white-space:nowrap;
+  transition:background-color .15s ease,border-color .15s ease,color .15s ease,transform .12s ease;}
+.btn:disabled{opacity:.25;cursor:not-allowed;}
+.btn-green{color:var(--green);border-color:rgba(0,232,122,.4);background:rgba(0,232,122,.07);}
+.btn-green:hover:not(:disabled){background:rgba(0,232,122,.16);border-color:var(--green);}
+.btn-cyan{color:var(--cyan);border-color:rgba(34,211,238,.4);background:rgba(34,211,238,.07);}
+.btn-cyan:hover:not(:disabled){background:rgba(34,211,238,.16);border-color:var(--cyan);}
+.btn-blue{color:var(--blue);border-color:rgba(77,127,255,.4);background:rgba(77,127,255,.07);}
+.btn-blue:hover:not(:disabled){background:rgba(77,127,255,.16);border-color:var(--blue);}
+.btn-purple{color:var(--purple);border-color:rgba(167,139,250,.4);background:rgba(167,139,250,.07);}
+.btn-purple:hover:not(:disabled){background:rgba(167,139,250,.16);border-color:var(--purple);}
+.btn-amber{color:var(--amber);border-color:rgba(255,170,0,.4);background:rgba(255,170,0,.06);}
+.btn-amber:hover:not(:disabled){background:rgba(255,170,0,.14);border-color:var(--amber);}
+.btn-red{color:var(--red);border-color:rgba(255,61,90,.4);background:rgba(255,61,90,.06);}
+.btn-red:hover:not(:disabled){background:rgba(255,61,90,.15);border-color:var(--red);}
+.btn-muted{color:var(--muted);border-color:var(--border);background:transparent;}
+.btn-muted:hover:not(:disabled){background:var(--bg2);color:var(--white);}
+
+/* ── Progress / bar ────────────────────────────────────────────────────────── */
+.progress-row{display:flex;align-items:center;gap:16px;margin-bottom:16px;}
+.pct-label{font-size:34px;font-weight:700;min-width:100px;font-variant-numeric:tabular-nums;transition:color .3s;}
+.pct-label.idle{color:var(--muted);font-size:22px;}
+.bar-wrap{flex:1;height:7px;background:var(--bg2);border-radius:4px;overflow:hidden;border:1px solid var(--border);}
+.bar-fill{height:100%;border-radius:4px;transition:width .6s ease;}
+.bar-green{background:linear-gradient(90deg,var(--green-dim),var(--green));box-shadow:0 0 12px rgba(0,232,122,.35);}
+.bar-blue{background:linear-gradient(90deg,rgba(77,127,255,.6),var(--blue));box-shadow:0 0 12px rgba(77,127,255,.4);}
+.bar-purple{background:linear-gradient(90deg,rgba(167,139,250,.6),var(--purple));box-shadow:0 0 12px rgba(167,139,250,.4);}
+.bar-cyan{background:linear-gradient(90deg,rgba(34,211,238,.6),var(--cyan));box-shadow:0 0 12px rgba(34,211,238,.4);}
+.bar-amber{background:linear-gradient(90deg,rgba(255,170,0,.6),var(--amber));box-shadow:0 0 12px rgba(255,170,0,.4);}
+.eta-label{font-size:13px;color:var(--muted);min-width:90px;text-align:right;}
+.eta-label span{color:var(--amber);font-weight:500;}
+
+/* ── Stats row ─────────────────────────────────────────────────────────────── */
+.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:4px;}
+.stat{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r-md);
+  padding:14px 18px;box-shadow:inset 0 1px 0 var(--hair-hi);transition:border-color .18s ease;}
+.stat-label{font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);margin-bottom:6px;}
+.stat-value{font-size:20px;font-weight:500;color:var(--white);font-variant-numeric:tabular-nums;}
+.stat-value.empty{color:var(--muted);font-size:15px;}
+
+/* ── Lists ─────────────────────────────────────────────────────────────────── */
+.lists-grid{display:grid;grid-template-columns:1.2fr 1fr 1.2fr;gap:16px;}
+.lists-grid-2{display:grid;grid-template-columns:1fr 1.6fr;gap:16px;}
+.lists-grid-3col{display:grid;grid-template-columns:1fr 0.8fr 1.6fr;gap:16px;}
+@media(max-width:1100px){.lists-grid,.lists-grid-3col{grid-template-columns:1fr 1fr;}}
+@media(max-width:700px){.lists-grid,.lists-grid-2,.lists-grid-3col{grid-template-columns:1fr;}}
+.list-card{background:var(--bg1);border:1px solid var(--border);border-radius:var(--r-lg);
+  overflow:hidden;display:flex;flex-direction:column;box-shadow:inset 0 1px 0 var(--hair-hi);}
+.list-header{padding:13px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;
+  justify-content:space-between;background:var(--bg2);flex-shrink:0;}
+.list-title{font-family:var(--sans);font-size:12px;font-weight:700;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--white);}
+.list-count{font-size:11px;color:var(--muted);background:var(--bg);padding:2px 8px;
+  border-radius:10px;border:1px solid var(--border);}
+.list-body{padding:6px 0;max-height:280px;overflow-y:auto;flex:1;}
+/* Su barra se define abajo, en el bloque unico de barras de desplazamiento. */
+.list-item{padding:9px 16px;font-size:12px;color:var(--text);border-bottom:1px solid rgba(30,34,53,.5);
+  display:flex;align-items:center;gap:8px;transition:background .1s;}
+.list-item:last-child{border:none;}
+.list-item:hover{background:var(--bg2);}
+.item-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0;}
+.item-size{font-size:11px;color:var(--muted);flex-shrink:0;}
+.item-badge{font-size:9px;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;
+  border-radius:4px;border:1px solid;flex-shrink:0;}
+.badge-pending{color:var(--muted);border-color:var(--border);}
+.badge-done{color:var(--green-dim);border-color:rgba(0,168,85,.3);}
+.badge-error{color:var(--red);border-color:rgba(255,61,90,.3);}
+.badge-blue{color:var(--blue);border-color:rgba(77,127,255,.3);}
+.badge-purple{color:var(--purple);border-color:rgba(167,139,250,.3);}
+.badge-amber{color:var(--amber);border-color:rgba(255,170,0,.3);}
+.badge-cyan{color:var(--cyan);border-color:rgba(34,211,238,.3);}
+.item-cancel{flex-shrink:0;background:none;border:none;color:var(--muted);cursor:pointer;
+  font-size:13px;padding:2px 4px;border-radius:3px;}
+.item-cancel:hover{color:var(--red);background:rgba(255,61,90,.1);}
+.empty-item{color:var(--muted);text-align:center;padding:26px 20px;display:block;
+  font-size:11px;letter-spacing:.08em;text-transform:lowercase;}
+/* Bitrate por pelicula. --border y --text, no --line/--dim: esos DOS NO
+   EXISTEN en la paleta de :root aunque aparezcan en algun var() suelto por el
+   fichero, y un var() sin definir no pinta nada (hereda en silencio). */
+.q-mbps{width:58px;padding:3px 5px;font-size:11px;text-align:right;
+  background:var(--bg2);color:var(--text);border:1px solid var(--border);
+  border-radius:5px;margin-left:6px;}
+.q-mbps::placeholder{color:var(--muted);}
+.q-modo{padding:3px 5px;font-size:11px;background:var(--bg2);color:var(--text);
+  border:1px solid var(--border);border-radius:5px;margin-left:6px;}
+.q-modo-set{color:var(--cyan);border-color:var(--cyan);font-weight:600;}
+.q-mbps-set{color:var(--amber);border-color:var(--amber);font-weight:600;}
+.q-btn{background:none;border:none;color:var(--muted);cursor:pointer;font-size:10px;
+  padding:0 4px;border-radius:3px;line-height:1;flex-shrink:0;}
+.q-btn:hover{color:var(--green);background:rgba(0,232,122,.1);}
+.q-btn:disabled{opacity:.15;cursor:not-allowed;}
+.q-btn:disabled:hover{color:var(--muted);background:none;}
+.q-actions{display:flex;flex-direction:column;gap:0;flex-shrink:0;}
+.tick-ok{color:var(--green-dim);flex-shrink:0;}
+.tick-warn{color:var(--amber);flex-shrink:0;}
+.tick-err{color:var(--red);flex-shrink:0;}
+.tick-unk{color:var(--muted);flex-shrink:0;}
+
+/* ── Log card inline ───────────────────────────────────────────────────────── */
+.log-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r-md);
+  overflow:hidden;margin-top:16px;box-shadow:inset 0 1px 0 var(--hair-hi);}
+.log-header{padding:8px 14px;border-bottom:1px solid var(--border);font-size:9px;
+  letter-spacing:.15em;text-transform:uppercase;color:var(--muted);display:flex;justify-content:space-between;}
+.log-body{padding:10px 14px;font-size:12px;color:var(--muted);line-height:1.7;
+  max-height:130px;overflow-y:auto;font-family:var(--mono);}
+/* Su barra se define abajo, en el bloque unico de barras de desplazamiento. */
+.log-line{color:var(--text);}
+.log-line.err{color:var(--red);}
+.log-list-body{padding:0;max-height:280px;overflow-y:auto;}
+/* Su barra se define abajo, en el bloque unico de barras de desplazamiento. */
+.log-entry{padding:9px 16px;border-bottom:1px solid rgba(30,34,53,.4);cursor:pointer;
+  transition:background .1s;display:flex;align-items:center;gap:10px;font-size:11px;}
+.log-entry:last-child{border:none;}
+.log-entry:hover{background:var(--bg2);}
+.log-entry-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text);}
+.log-entry-time{font-size:10px;color:var(--muted);flex-shrink:0;}
+
+/* ── Controls ──────────────────────────────────────────────────────────────── */
+.controls{display:flex;gap:10px;margin-top:18px;flex-wrap:wrap;}
+
+/* ── Error panel ───────────────────────────────────────────────────────────── */
+.error-panel{background:var(--bg1);border:1px solid rgba(255,61,90,.35);border-radius:var(--r-lg);
+  overflow:hidden;display:none;}
+.error-panel.visible{display:flex;flex-direction:column;}
+.error-header{padding:14px 20px;border-bottom:1px solid rgba(255,61,90,.2);display:flex;
+  align-items:center;justify-content:space-between;background:rgba(255,61,90,.05);}
+.error-title{font-family:var(--sans);font-size:13px;font-weight:700;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--red);}
+.error-body{padding:16px 20px;font-size:12px;color:var(--text);line-height:1.7;
+  word-break:break-all;max-height:150px;overflow-y:auto;}
+
+/* ── Step indicator ────────────────────────────────────────────────────────── */
+.step-indicator{display:flex;gap:8px;margin-bottom:16px;align-items:center;flex-wrap:wrap;}
+.step{font-size:10px;letter-spacing:.1em;text-transform:uppercase;padding:4px 12px;
+  border-radius:20px;border:1px solid var(--border);color:var(--muted);
+  transition:color .3s ease,border-color .3s ease,background-color .3s ease;}
+.step.active{color:var(--purple);border-color:rgba(167,139,250,.5);background:rgba(167,139,250,.08);}
+.step.done{color:var(--green-dim);border-color:rgba(0,168,85,.3);}
+.step-arrow{color:var(--muted);font-size:10px;}
+
+/* ── Field groups ──────────────────────────────────────────────────────────── */
+.options-row{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;}
+.field-group{display:flex;flex-direction:column;gap:6px;}
+.field-label{font-size:9px;letter-spacing:.15em;text-transform:uppercase;color:var(--muted);}
+
+/* ── Probe result ──────────────────────────────────────────────────────────── */
+.probe-result{margin-top:10px;display:flex;gap:12px;align-items:center;min-height:22px;
+  font-size:11px;flex-wrap:wrap;}
+.probe-badge{padding:3px 10px;border-radius:5px;border:1px solid;font-size:10px;letter-spacing:.08em;}
+.pbadge-res{color:var(--blue);border-color:rgba(77,127,255,.3);background:rgba(77,127,255,.07);}
+.pbadge-warn{color:var(--amber);border-color:rgba(255,170,0,.4);background:rgba(255,170,0,.08);font-weight:700;}
+.pbadge-content{color:var(--purple);border-color:rgba(167,139,250,.3);background:rgba(167,139,250,.07);}
+
+/* ── Sync-specific ─────────────────────────────────────────────────────────── */
+.sync-streams{display:flex;flex-direction:column;gap:14px;margin-top:14px;}
+.stream-row{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r-lg);
+  padding:16px 20px;box-shadow:inset 0 1px 0 var(--hair-hi);}
+.stream-row-header{display:flex;align-items:center;gap:12px;margin-bottom:14px;}
+.stream-type-badge{font-size:9px;letter-spacing:.12em;text-transform:uppercase;
+  padding:3px 9px;border-radius:4px;border:1px solid;flex-shrink:0;}
+.stream-type-audio{color:var(--green);border-color:rgba(0,232,122,.3);background:rgba(0,232,122,.07);}
+.stream-type-sub{color:var(--cyan);border-color:rgba(34,211,238,.3);background:rgba(34,211,238,.07);}
+.stream-info{flex:1;font-size:12px;color:var(--white);}
+.stream-info small{color:var(--muted);font-size:10px;}
+.stream-enabled{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);}
+.toggle{position:relative;width:36px;height:20px;flex-shrink:0;}
+.toggle input{opacity:0;width:0;height:0;position:absolute;}
+.toggle-track{position:absolute;inset:0;border-radius:20px;background:var(--border);
+  cursor:pointer;transition:background .2s;}
+.toggle input:checked+.toggle-track{background:var(--cyan);}
+.toggle-track::after{content:'';position:absolute;width:14px;height:14px;border-radius:50%;
+  background:var(--white);top:3px;left:3px;transition:transform .2s;}
+.toggle input:checked+.toggle-track::after{transform:translateX(16px);}
+.offset-row{display:flex;align-items:center;gap:12px;}
+.offset-slider{flex:1;-webkit-appearance:none;appearance:none;height:4px;border-radius:2px;
+  outline:none;cursor:pointer;background:var(--border);}
+.offset-slider::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;
+  border-radius:50%;cursor:pointer;border:2px solid var(--bg);}
+.offset-slider.audio-slider{accent-color:var(--green);}
+.offset-slider.audio-slider::-webkit-slider-thumb{background:var(--green);}
+.offset-slider.sub-slider{accent-color:var(--cyan);}
+.offset-slider.sub-slider::-webkit-slider-thumb{background:var(--cyan);}
+.offset-value{font-size:18px;font-weight:700;min-width:80px;text-align:center;
+  font-variant-numeric:tabular-nums;}
+.offset-value.audio-val{color:var(--green);}
+.offset-value.sub-val{color:var(--cyan);}
+.offset-hint{font-size:10px;color:var(--muted);min-width:120px;}
+
+/* ── YT-DLP title preview ──────────────────────────────────────────────────── */
+.title-preview{margin-top:10px;font-size:12px;color:var(--muted);min-height:20px;
+  transition:color .2s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.title-preview.loaded{color:var(--green-dim);}
+.title-preview.loading{color:var(--amber);}
+
+/* ── Log modal ─────────────────────────────────────────────────────────────── */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.82);
+  backdrop-filter:blur(4px);z-index:500;align-items:center;justify-content:center;}
+.modal-overlay.open{display:flex;}
+.modal-box{background:var(--bg1);border:1px solid var(--border);border-radius:var(--r-xl);
+  box-shadow:inset 0 1px 0 var(--hair-hi);
+  width:min(900px,95vw);max-height:84vh;display:flex;flex-direction:column;overflow:hidden;}
+.modal-header{padding:16px 22px;border-bottom:1px solid var(--border);display:flex;
+  align-items:center;justify-content:space-between;background:var(--bg2);flex-shrink:0;gap:12px;}
+.modal-title{font-family:var(--sans);font-size:13px;font-weight:700;color:var(--white);
+  flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.modal-close{background:none;border:none;color:var(--muted);cursor:pointer;font-size:17px;
+  padding:2px 8px;border-radius:4px;}
+.modal-close:hover{color:var(--red);background:rgba(255,61,90,.1);}
+.modal-body{padding:16px 22px;overflow-y:auto;flex:1;font-family:var(--mono);font-size:12px;
+  line-height:1.9;color:var(--text);white-space:pre-wrap;word-break:break-all;}
+/* Su barra se define abajo, en el bloque unico de barras de desplazamiento. */
+.log-err{color:var(--red);}
+.log-ok{color:var(--green-dim);}
+
+/* ── File browser modal ────────────────────────────────────────────────────── */
+.browser-modal{background:var(--bg1);border:1px solid var(--border);border-radius:var(--r-xl);
+  box-shadow:inset 0 1px 0 var(--hair-hi);
+  width:min(700px,95vw);max-height:80vh;display:flex;flex-direction:column;overflow:hidden;}
+.browser-path{padding:10px 20px;font-size:10px;color:var(--muted);background:var(--bg);
+  border-bottom:1px solid var(--border);font-family:var(--mono);flex-shrink:0;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.browser-body{overflow-y:auto;flex:1;padding:6px 0;}
+.browser-entry{padding:9px 20px;display:flex;align-items:center;gap:10px;cursor:pointer;
+  transition:background .1s;border-bottom:1px solid rgba(30,34,53,.4);font-size:11px;}
+.browser-entry:last-child{border:none;}
+.browser-entry:hover{background:var(--bg2);}
+.browser-entry.is-dir{color:var(--amber);}
+.browser-entry.is-file{color:var(--text);}
+.browser-entry.is-file:hover{color:var(--green);}
+.browser-icon{flex-shrink:0;font-size:13px;width:18px;text-align:center;}
+.browser-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.browser-size{font-size:10px;color:var(--muted);flex-shrink:0;}
+.browser-loading{padding:40px;text-align:center;color:var(--muted);font-size:11px;}
+
+/* ── Big filename display ──────────────────────────────────────────────────── */
+.big-filename{font-family:var(--sans);font-size:18px;font-weight:700;color:var(--white);
+  margin-bottom:18px;min-height:26px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.big-filename.idle-text{color:var(--muted);font-weight:400;font-size:13px;font-family:var(--mono);}
+
+/* ── Sync job list ─────────────────────────────────────────────────────────── */
+.sync-job-item{padding:10px 16px;font-size:12px;border-bottom:1px solid rgba(30,34,53,.5);
+  display:flex;align-items:center;gap:8px;}
+.sync-job-item:last-child{border:none;}
+
+/* == BARRAS DE DESPLAZAMIENTO ============================================== */
+/* UN SOLO SITIO PARA LAS CINCO (31/08/2026). Antes cada superficie traia su
+   propia pareja de reglas repartida por el fichero -cuatro a 3 px y una a 4-, y
+   ya habian divergido en el radio y en el color. Es la misma clase de
+   duplicacion que en los .ps1: mientras coinciden no molesta, y el dia que una
+   se queda atras nadie se entera.
+
+   DOS ANCHOS, POR USO Y NO POR CAPRICHO:
+     16 px  superficies que se NAVEGAN y ocupan casi toda la pantalla: el
+            selector de ficheros (que comparten remux, sanear, sync, audio y
+            subs) y el modal de logs. Aqui se arrastra el pulgar de verdad.
+     12 px  tarjetas de 130-280 px que se LEEN: colas y logs en linea. Una barra
+            de 16 px sobre una tarjeta corta pesa demasiado en la pantalla.
+   Las dos son agarrables; los 3 px de antes no lo eran con un raton.
+
+   COLORES LITERALES Y NO var(--muted). Las pseudo-elementos
+   ::-webkit-scrollbar NO heredan las variables CSS: con var() el navegador
+   descarta la declaracion entera y el pulgar sale SIN color -invisible-, que es
+   peor que dejarlo estrecho. Si se cambia la paleta de arriba hay que tocar
+   estos valores a mano:
+     #4a5070 = --muted   #080910 = --bg   #1e2235 = --border   #ffaa00 = --amber
+
+   min-height en el pulgar: sin el, en una carpeta de 1.373 entradas el pulgar
+   se encoge hasta ser inagarrable, que es justo cuando mas falta hace. */
+
+.browser-body::-webkit-scrollbar,
+.modal-body::-webkit-scrollbar{width:16px;}
+
+.list-body::-webkit-scrollbar,
+.log-list-body::-webkit-scrollbar,
+.log-body::-webkit-scrollbar{width:12px;}
+
+.browser-body::-webkit-scrollbar-track,
+.modal-body::-webkit-scrollbar-track,
+.list-body::-webkit-scrollbar-track,
+.log-list-body::-webkit-scrollbar-track,
+.log-body::-webkit-scrollbar-track{background:#080910;border-left:1px solid #1e2235;}
+
+.browser-body::-webkit-scrollbar-thumb,
+.modal-body::-webkit-scrollbar-thumb,
+.list-body::-webkit-scrollbar-thumb,
+.log-list-body::-webkit-scrollbar-thumb,
+.log-body::-webkit-scrollbar-thumb{background-color:#4a5070;border-radius:8px;
+  border:2px solid #080910;background-clip:padding-box;min-height:44px;}
+
+.browser-body::-webkit-scrollbar-thumb:hover,
+.modal-body::-webkit-scrollbar-thumb:hover,
+.list-body::-webkit-scrollbar-thumb:hover,
+.log-list-body::-webkit-scrollbar-thumb:hover,
+.log-body::-webkit-scrollbar-thumb:hover{background-color:#ffaa00;}
+
+/* FIREFOX, Y SOLO FIREFOX. scrollbar-width y scrollbar-color son la via
+   estandar, pero NO se pueden declarar junto a las ::-webkit-scrollbar: cuando
+   Chromium ve las estandar, IGNORA las webkit. Las tenia sueltas en la regla de
+   .browser-body y anulaban el ensanchado entero -medido: forzar width:34px no
+   movia el layout ni un pixel, seguia en los 15 px nativos-. El @supports las
+   deja solo donde no existen las webkit.
+   Firefox no deja elegir el ancho (solo auto/thin), asi que alli se queda en el
+   nativo; lo que si se gana es que el pulgar se vea. */
+@supports not selector(::-webkit-scrollbar){
+  .browser-body,.modal-body,.list-body,.log-list-body,.log-body{
+    scrollbar-width:auto;scrollbar-color:#4a5070 #080910;}
+}
+
+/* == INTERACCIONES Y FOCO ================================================== */
+/* ANYADIDO EL 31/08/2026. Lo que mas distingue una interfaz cuidada de una
+   correcta no son los colores: es que responda al raton y al teclado.
+
+   TODO LO DE AQUI ES GRATIS POR FOTOGRAMA. Solo se anima transform y opacity,
+   que el navegador resuelve en el compositor sin volver a calcular layout ni
+   repintar. No se usa box-shadow animado, ni filter, ni backdrop-filter, ni
+   ninguna transicion sobre width/height/top/left. */
+
+/* Botones: se levantan 1 px al pasar y se hunden al pulsar. Es el gesto que
+   hace que un boton parezca un boton. */
+.btn:hover:not(:disabled){transform:translateY(-1px);}
+.btn:active:not(:disabled){transform:translateY(0);}
+
+/* Tarjetas y celdas: el borde se aclara al pasar por encima. El de reposo es
+   muy discreto a proposito, asi que sin esto no habia ninguna senyal de que
+   una tarjeta fuera interactiva. */
+.stat:hover{border-color:var(--border-hi);}
+
+/* Filas de lista: un filo de color a la izquierda en vez de solo el cambio de
+   fondo. Un inset box-shadow no crea capa nueva ni desplaza nada. */
+.list-item:hover,
+.log-entry:hover,
+.browser-entry:hover{box-shadow:inset 2px 0 0 var(--border-hi);}
+
+/* FOCO DE TECLADO. No habia ninguno: tabulando por el panel no se veia donde
+   estabas, y en una herramienta con botones que borran ficheros eso importa.
+   :focus-visible y no :focus, para que el anillo NO salga al hacer clic con el
+   raton -que es lo que hace que la gente acabe poniendo outline:none-. */
+.btn:focus-visible,
+.inp:focus-visible,
+.sel:focus-visible,
+.tab-btn:focus-visible,
+.modal-close:focus-visible,
+.item-cancel:focus-visible,
+.q-btn:focus-visible,
+.browser-entry:focus-visible{outline:2px solid var(--green);outline-offset:2px;}
+
+/* Los modales entran en vez de aparecer de golpe. 120 ms: se nota que hay un
+   movimiento pero no hay que esperarlo. */
+@keyframes modal-in{from{opacity:0;transform:translateY(8px) scale(.99);}
+                    to{opacity:1;transform:none;}}
+.modal-overlay.open .modal-box,
+.modal-overlay.open .browser-modal{animation:modal-in .12s ease-out;}
+
+/* ACCESIBILIDAD: si el sistema pide menos movimiento, se para lo que se mueve.
+   SE NOMBRAN LOS ELEMENTOS, NO SE USA '*' (medido el 31/08/2026). La version
+   universal -'*,*::before,*::after'- es la que se ve en todas partes, y aqui
+   costaba el 134% del recalculo de estilo: 7,64 ms frente a 3,26 sin ella.
+   Un selector universal obliga al motor a reevaluar los 487 elementos del
+   panel cada vez que algo invalida un ambito, y este panel se refresca solo.
+   Con la lista explicita el efecto es el mismo -son las UNICAS cosas que se
+   animan en todo el fichero- y no cuesta nada. */
+@media (prefers-reduced-motion: reduce){
+  .tab-dot.on,.rmx-indet,.bar-fill,.modal-overlay.open .modal-box,
+  .modal-overlay.open .browser-modal,.btn,.step,.tab-btn,.progress-card::before{
+    animation:none !important;transition:none !important;}
+}

@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MEDIABOX</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTIiIGZpbGw9IiMwZDBmMWEiLz48cmVjdCB4PSI4IiB5PSIxNiIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjMyIiByeD0iNCIgZmlsbD0iIzFlMjIzNSIvPjxyZWN0IHg9IjEyIiB5PSIyMCIgd2lkdGg9IjQwIiBoZWlnaHQ9IjI0IiByeD0iMiIgZmlsbD0iIzA4MDkxMCIvPjxjaXJjbGUgY3g9IjMyIiBjeT0iMzIiIHI9IjgiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzAwZTg3YSIgc3Ryb2tlLXdpZHRoPSIyLjUiLz48cG9seWdvbiBwb2ludHM9IjI5LDI4IDI5LDM2IDM3LDMyIiBmaWxsPSIjMDBlODdhIi8+PC9zdmc+">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<!-- El CSS vive en static/panel.css desde el 31/08/2026 (eran 22 KB aqui
+     dentro). El ?v= lo pone app.py con la fecha del fichero: sin eso el
+     navegador cachea y los cambios no se ven. -->
+<link rel="stylesheet" href="{{ url_for('static', filename='panel.css') }}?v={{ v_css }}">
+</head>
+<body>
+
+<header>
+  <div class="logo">MEDIA<span>BOX</span></div>
+  <div class="tabs">
+    <button class="tab-btn tab-enc active" onclick="switchTab('enc')">
+      <div class="tab-dot" id="dot-enc"></div> ⚙ Encoder
+    </button>
+    <button class="tab-btn tab-sync" onclick="switchTab('sync')">
+      <div class="tab-dot" id="dot-sync"></div> ⇌ Sync
+    </button>
+    <button class="tab-btn tab-remux" onclick="switchTab('remux')">
+      <div class="tab-dot" id="dot-remux"></div> ⧉ Remux
+    </button>
+    <button class="tab-btn tab-audio" onclick="switchTab('audio')">
+      <div class="tab-dot" id="dot-audio"></div> ♪ Audio
+    </button>
+    <button class="tab-btn tab-subs" onclick="switchTab('subs')">
+      <div class="tab-dot" id="dot-subs"></div> ▤ Subs
+    </button>
+    <button class="tab-btn tab-ytdlp" onclick="switchTab('ytdlp')">
+      <div class="tab-dot" id="dot-ytdlp"></div> ↓ YT-DLP
+    </button>
+  </div>
+  <div id="conn">● CONNECTING</div>
+</header>
+
+<!-- Aviso de PAUSA GLOBAL de mantenimiento (C:\Media\tmp\pipeline_paused).
+     Fuera de la cabecera y de las pestañas a propósito: la pausa frena los TRES
+     watchers y la cola de remux, así que tiene que verse desde cualquier sitio.
+     Antes no se veía en ninguno: quedaba puesta y el panel simplemente dejaba de
+     encolar sin dar ninguna explicación. -->
+<div id="global-pause" style="display:none;margin:0;padding:9px 18px;font-size:13px;font-weight:600;
+     background:rgba(251,191,36,.14);border-bottom:1px solid var(--amber);color:var(--amber);
+     text-align:center;letter-spacing:.02em">
+  ⏸ PAUSA GLOBAL activa — ningún pipeline coge trabajo nuevo.
+  <span style="font-weight:400;opacity:.85">Lo que ya estaba en marcha termina. Se quita borrando
+  <code style="font-size:12px">C:\Media\tmp\pipeline_paused</code>.</span>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     TAB 1 — ENCODER
+     ══════════════════════════════════════════════════════════════════════════ -->
+<div class="tab-panel active" id="panel-enc">
+<main>
+
+<div class="progress-card pc-enc" id="enc-prog-card">
+  <div id="enc-filename" class="big-filename idle-text">No active encode</div>
+  <div class="progress-row">
+    <div class="pct-label idle" id="enc-pct" style="color:var(--green)">—</div>
+    <div class="bar-wrap"><div class="bar-fill bar-green" id="enc-bar" style="width:0%"></div></div>
+    <div class="eta-label" id="enc-eta"></div>
+  </div>
+  <div class="stats-row">
+    <div class="stat"><div class="stat-label">FPS</div><div class="stat-value empty" id="enc-fps">—</div></div>
+    <div class="stat"><div class="stat-label">Speed</div><div class="stat-value empty" id="enc-speed">—</div></div>
+    <div class="stat"><div class="stat-label">Bitrate</div><div class="stat-value empty" id="enc-bitrate">—</div></div>
+    <div class="stat"><div class="stat-label">Encoded</div><div class="stat-value empty" id="enc-time">—</div></div>
+  </div>
+  <div class="controls">
+    <button class="btn btn-red" id="enc-btn-stop" disabled onclick="encKill()" title="Mata el encode actual y PAUSA la cola">■ Stop</button>
+    <button class="btn btn-amber" id="enc-btn-skip" disabled onclick="encSkip()" title="Mata el encode actual y pasa al siguiente de la cola">▶▶ Skip</button>
+    <button class="btn btn-green" id="enc-btn-resume" style="display:none" onclick="encResume()" title="Quita la pausa: el watcher vuelve a coger ficheros de la cola">▶ Reanudar cola</button>
+    <label class="btn btn-muted" style="cursor:pointer" title="Con esto activo, nada arranca solo: una película solo entra cuando le has elegido modo (ICQ/QVBR) o le has puesto Mbps.&#10;NO es una pausa: lo que ya está decidido entra con normalidad y lo que está corriendo sigue.">
+      <input type="checkbox" id="enc-hold" onchange="encSetHold(this.checked)"> ⏸ Retener nuevos
+    </label>
+  </div>
+</div>
+
+<div class="lists-grid">
+  <div class="list-card">
+    <div class="list-header"><span class="list-title">Queue</span><span class="list-count" id="enc-q-count">0</span></div>
+    <div class="list-body" id="enc-queue-list"><div class="list-item empty-item">Empty</div></div>
+  </div>
+  <div class="list-card">
+    <div class="list-header"><span class="list-title">Encode Logs</span><span class="list-count" id="enc-log-count">0</span></div>
+    <div class="log-list-body" id="enc-log-list"><div class="list-item empty-item">No logs yet</div></div>
+  </div>
+  <div class="list-card">
+    <div class="list-header"><span class="list-title">Completed</span><span class="list-count" id="enc-done-count">0</span></div>
+    <div class="list-body" id="enc-done-list"><div class="list-item empty-item">—</div></div>
+  </div>
+</div>
+
+<div class="error-panel" id="enc-error-panel">
+  <div class="error-header">
+    <span class="error-title">⚠ Encode Error</span>
+    <button class="btn btn-muted" onclick="encDismissError()">Dismiss</button>
+  </div>
+  <div class="error-body" id="enc-error-body">—</div>
+</div>
+
+</main>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     TAB 2 — SYNC
+     ══════════════════════════════════════════════════════════════════════════ -->
+<div class="tab-panel" id="panel-remux">
+<main>
+
+<div class="card">
+  <h2>Remux &mdash; montar desde varias fuentes</h2>
+  <div style="color:var(--dim);font-size:13px;margin:-6px 0 14px">
+    Coge el v&iacute;deo de un fichero y las pistas de otros. Mide el desfase y te dice qu&eacute; hacer.
+    <b>Nunca recodifica v&iacute;deo.</b> El audio solo si lo marcas.
+  </div>
+
+  <div id="rmx-slots"></div>
+  <div class="file-row" style="margin-top:6px">
+    <button class="btn btn-amber" onclick="rmxAddSlot()">+ A&ntilde;adir fichero</button>
+    <button class="btn btn-cyan" id="rmx-probe-btn" onclick="rmxProbe()">⟳ Leer pistas</button>
+    <!-- ORDEN DE LAS CASILLAS: de gratis a caro (19/08/2026). Lo que las separa
+         no es solo el coste sino CUANDO corren: paquetes y subtitulos son RED —
+         solo entran si el audio no engancha, o sea que marcarlos no cuesta nada
+         en el caso normal—, mientras que la de imagen corre SIEMPRE que esta
+         marcada, como segunda opinion. Por eso las dos primeras van marcadas por
+         defecto y la de imagen no. -->
+
+    <!-- 1) PAQUETES de vídeo (19/08/2026). Validado sobre 17 parejas con verdad
+         conocida. Va PRIMERA porque es la única que no exige que los ficheros
+         traigan nada dentro: ni subtítulos, ni audios que se parezcan. -->
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);margin-left:4px"
+           title="RED, no coste fijo: solo se usa si el audio NO engancha. Marcada no te cuesta nada en el caso normal.&#10;&#10;Correlaciona el TAMAÑO DE LOS PAQUETES de vídeo. Idea: un corte de plano o una escena compleja es cara en CUALQUIER encode, así que esa serie se parece entre dos masters distintos. Solo demultiplexa, no decodifica.&#10;&#10;Coste cuando entra: leer los dos ficheros enteros, escala con su tamaño. Medido: 10-20 s una pareja de 1080p, 51 s una de 4K (17 GB).&#10;&#10;Para qué sirve: es la única que no necesita NI subtítulos NI que los audios se parezcan. Acierta entre encodes completamente distintos (HEVC 4K contra x264 1080p).&#10;&#10;Precisión ~1 fotograma (200 ms), no el milisegundo. Y mide la línea de tiempo del VÍDEO: si en un fichero el audio va corrido respecto a su propio vídeo, su número y el del audio discrepan siendo los dos correctos.&#10;&#10;LÍMITES medidos: no mide deriva de cadencia, no lee montajes con muchos cortes, y no funciona con XviD/DivX. En todos esos casos DECLINA y lo dice, no se inventa un número.">
+      <input type="checkbox" id="rmx-paq-check" checked>
+      medir también por paquetes de vídeo
+    </label>
+    <!-- 2) SUBTITULOS (17/08/2026). Usa los TIEMPOS, no el texto, así que vale
+         con PGS y no hace falta OCR. Cronometrado en un fichero de 17,6 GB:
+         46 s, frente a 199 s de la imagen. -->
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);margin-left:4px"
+           title="RED, no coste fijo: solo se usa si el audio NO engancha. Marcada no te cuesta nada en el caso normal.&#10;&#10;Mide con los TIEMPOS de los subtítulos, no con el texto: vale con PGS y no hace falta OCR.&#10;&#10;Coste cuando entra: solo demultiplexa. Medido en un fichero de 17,6 GB: 46 s (la imagen, 199 s).&#10;&#10;Para qué sirve: es inmune a la mezcla de audio Y al reencode, y al ser un tren de eventos enseña la ESTRUCTURA — si son montajes distintos, sale directamente en forma de varios tramos, incluso con muchos cortes (donde los paquetes ya no llegan).&#10;&#10;Precisión ±200 ms: los tiempos de un subtítulo son de autor, no medidos.&#10;&#10;Requiere que los DOS ficheros traigan subtítulos.">
+      <input type="checkbox" id="rmx-subs-check" checked>
+      medir también por subtítulos
+    </label>
+    <!-- 3) IMAGEN. La única que corre SIEMPRE que está marcada (segunda opinión),
+         y la más cara con diferencia: 156-544 s medidos hoy. Por eso va última y
+         DESMARCADA. -->
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);margin-left:4px"
+           title="OJO: esta corre SIEMPRE que la marcas, como segunda opinión — no es una red como las dos de arriba. Es la más cara con diferencia.&#10;&#10;Correlaciona la IMAGEN (luminancia media por fotograma). Decodifica vídeo de los DOS ficheros.&#10;&#10;Coste medido: 156 s en un 1080p de 100 min, 544 s en un 4K. Mientras corre se ve un contador.&#10;&#10;Para qué sirve: cuando el audio no engancha y tampoco hay subtítulos ni sirven los paquetes, o para confirmar una DERIVA de cadencia — es la única que da el alpha fino.&#10;&#10;Mucho menos precisa que el audio: ±83 ms (muestrea a 12 fps) frente a 0,5 ms.">
+      <input type="checkbox" id="rmx-video-check">
+      medir también por imagen
+    </label>
+    <!-- 4) LABIOS (02/09/2026). La única que mira DENTRO de un solo fichero.
+         Nace de un punto ciego real: midiendo un MKV suelto, la referencia es
+         otra pista del MISMO fichero, así que si el release trae todos los
+         audios corridos, la medida sale +7 ms y el panel dice «ya está
+         sincronizada» con los labios descuadrados medio segundo. -->
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);margin-left:4px"
+           title="OJO: corre SIEMPRE que la marcas, y contesta a OTRA PREGUNTA que las tres de arriba. Ellas comparan una pista con OTRO FICHERO; esta compara el fichero base con SU PROPIA IMAGEN.&#10;&#10;Para qué sirve: es la única que ve el caso en que un release trae TODOS los audios corridos respecto al vídeo. Entre ellos cuadran, así que la medida fina sale +7 ms y parece que no hay nada que arreglar mientras los labios van medio segundo por delante. Con un solo fichero, la casilla de imagen tampoco lo ve: compararía el vídeo consigo mismo.&#10;&#10;Cómo: los tiempos de un subtítulo están escritos contra la IMAGEN (el subtitulador los cuadra viendo la peli), así que son un testigo del vídeo que no depende del audio. Se compara cuándo aparece cada subtítulo con cuándo empieza a hablarse de verdad en la pista (canal central, que es donde vive el diálogo). No decodifica ni un fotograma de vídeo.&#10;&#10;Coste medido: 76 s en un 4K de 2 h 12 (decodifica el audio entero del fichero base).&#10;&#10;PRECISIÓN ±250 ms, y es un límite de fondo: un subtítulo entra entre 0 y 300 ms ANTES de la voz y ese margen cambia de un estudio a otro. Caza un error GRUESO (medio segundo se ve en los labios); NO afina milisegundos — para eso sigue mandando el audio. Validado inyectando desfases conocidos: +500 ms y -300 ms salieron clavados.&#10;&#10;Requiere que el fichero base traiga subtítulos.">
+      <input type="checkbox" id="rmx-voz-check">
+      comprobar labios (voz contra subtítulos)
+    </label>
+  </div>
+  <div style="font-size:11px;color:var(--muted);margin:6px 0 0 4px;line-height:1.5">
+    El audio (4 puntos) se mide <b>siempre</b>: cuesta ~2 s y es la única medida fina (0,5 ms).
+    Las casillas van de <b>gratis a cara</b>. Las dos primeras son una <b>red</b>: solo entran
+    si el audio no engancha, así que marcadas no cuestan nada en el caso normal — por eso vienen
+    marcadas. La de <b>imagen corre siempre</b> que la marcas (segunda opinión) y es la cara de
+    verdad: 156-544 s medidos. Si el audio no engancha y no queda ninguna red, te lo dice, en vez
+    de devolver un desfase inventado.<br>
+    Las cuatro anteriores comparan <b>una pista contra otro fichero</b>. La de <b>labios</b> es de otra
+    clase: compara el fichero base con <b>su propia imagen</b>, usando los tiempos de sus subtítulos
+    como testigo del vídeo. Es la única que ve el release que trae <b>todos</b> los audios corridos
+    —entre ellos cuadran, así que las otras dicen «ya está sincronizada» y no mienten—. Cuesta 76 s
+    y da ±250 ms: caza el medio segundo que se ve en los labios, no afina milisegundos.
+  </div>
+
+  <div id="rmx-tracks" style="margin-top:16px"></div>
+
+  <div id="rmx-launch" style="display:none;margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">
+    <div class="file-row">
+      <input class="inp cyan" id="rmx-outname" type="text" placeholder="Nombre de salida (.mkv)" autocomplete="off">
+      <button class="btn btn-green" onclick="rmxLaunch()">▶ Montar</button>
+    </div>
+    <div style="color:var(--dim);font-size:12px;margin-top:6px">
+      Sale en <code>C:\Media\encoded</code>. Espera turno si hay un encode en curso.
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Sanear &mdash; dejar una pel&iacute;cula lista para la biblioteca</h2>
+  <div style="color:var(--dim);font-size:13px;margin:-6px 0 14px">
+    Para una pel&iacute;cula que ya est&aacute; bien de imagen y no necesita pasar por el encoder.
+    Reconstruye el contenedor &mdash;el arreglo de la <b>pantalla negra</b> en Direct Play, que un
+    remux normal <i>no</i> arregla&mdash;, deja el <b>castellano por defecto</b> y los
+    <b>forzados en castellano</b> por defecto, y convierte cualquier c&oacute;dec que la TV no
+    decodifique. <b>Nunca toca el v&iacute;deo.</b>
+  </div>
+  <div class="file-row">
+    <input class="inp cyan" id="san-file-input" type="text" placeholder="Ruta del .mkv" autocomplete="off">
+    <button class="btn btn-amber" onclick="openBrowser('sanear')">&#128193;</button>
+    <button class="btn btn-cyan" id="san-ana-btn" onclick="sanAnalizar()">&#10227; Analizar</button>
+    <button class="btn btn-green" id="san-run-btn" onclick="sanRun()">&#9654; Sanear</button>
+  </div>
+  <div id="san-out" style="margin-top:12px"></div>
+</div>
+
+<div class="card">
+  <h2>Trabajos</h2>
+  <div id="rmx-jobs"><div class="browser-loading">Sin trabajos</div></div>
+</div>
+
+</main>
+</div>
+
+<div class="tab-panel" id="panel-sync">
+<main>
+
+<div class="card">
+  <h2>Audio &amp; Subtitle Sync Fix</h2>
+  <div class="file-row">
+    <input class="inp cyan" id="sync-file-input" type="text"
+      placeholder="Full path to video file, or Browse →" autocomplete="off">
+    <button class="btn btn-amber" onclick="openBrowser('sync')">📁 Browse</button>
+    <button class="btn btn-cyan" id="sync-probe-btn" onclick="syncProbe()">⟳ Probe</button>
+  </div>
+
+  <div id="sync-streams-area" class="sync-streams" style="display:none">
+
+    <!-- Audio stream selector + slider -->
+    <div class="stream-row" id="sync-audio-row">
+      <div class="stream-row-header">
+        <span class="stream-type-badge stream-type-audio">Audio</span>
+        <div class="field-group" style="flex:1">
+          <div class="field-label">Track to adjust</div>
+          <select class="sel" id="sync-audio-sel" multiple size="3" style="max-width:420px"></select>
+        </div>
+        <label class="stream-enabled">
+          <div class="toggle">
+            <input type="checkbox" id="sync-audio-enabled" checked>
+            <div class="toggle-track"></div>
+          </div>
+          Enable
+        </label>
+      </div>
+      <div class="offset-row">
+        <div class="offset-hint" id="sync-audio-hint">Negative = advance (earlier)<br>Positive = delay (later)</div>
+        <input type="range" class="offset-slider audio-slider" id="sync-audio-slider"
+          min="-5" max="5" step="0.05" value="0">
+        <div class="offset-value audio-val" id="sync-audio-val">0.00s</div>
+        <input type="number" class="inp" id="sync-audio-fine" step="0.01" min="-10" max="10"
+          value="0" style="width:90px;padding:8px 10px;font-size:13px;" title="Fine-tune (seconds)">
+      </div>
+    </div>
+
+    <!-- Subtitle stream selector + slider -->
+    <div class="stream-row" id="sync-sub-row">
+      <div class="stream-row-header">
+        <span class="stream-type-badge stream-type-sub">Subtitles</span>
+        <div class="field-group" style="flex:1">
+          <div class="field-label">Track to adjust</div>
+          <select class="sel" id="sync-sub-sel" multiple size="4" style="max-width:420px"></select>
+        </div>
+        <label class="stream-enabled">
+          <div class="toggle">
+            <input type="checkbox" id="sync-sub-enabled">
+            <div class="toggle-track"></div>
+          </div>
+          Enable
+        </label>
+      </div>
+      <div class="offset-row">
+        <div class="offset-hint">Negative = advance (earlier)<br>Positive = delay (later)</div>
+        <input type="range" class="offset-slider sub-slider" id="sync-sub-slider"
+          min="-5" max="5" step="0.05" value="0">
+        <div class="offset-value sub-val" id="sync-sub-val">0.00s</div>
+        <input type="number" class="inp" id="sync-sub-fine" step="0.01" min="-10" max="10"
+          value="0" style="width:90px;padding:8px 10px;font-size:13px;" title="Fine-tune (seconds)">
+      </div>
+    </div>
+
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:4px;">
+      <button class="btn btn-cyan" id="sync-add-btn" onclick="syncAdd()">▲ Queue Encode</button>
+      <span style="font-size:11px;color:var(--muted)" id="sync-output-hint"></span>
+    </div>
+  </div>
+</div>
+
+<!-- Active sync job -->
+<div class="progress-card pc-sync" id="sync-prog-card">
+  <div id="sync-filename" class="big-filename idle-text">No active sync job</div>
+  <div class="log-card" id="sync-log-card" style="display:none">
+    <div class="log-header"><span>ffmpeg output</span><span id="sync-log-count">—</span></div>
+    <div class="log-body" id="sync-log-body">—</div>
+  </div>
+  <div class="controls">
+    <button class="btn btn-red" id="sync-btn-cancel" disabled onclick="syncCancel()">✕ Cancel</button>
+  </div>
+</div>
+
+<!-- Sync job history -->
+<div class="lists-grid-2">
+  <div class="list-card">
+    <div class="list-header"><span class="list-title">Sync Queue</span><span class="list-count" id="sync-q-count">0</span></div>
+    <div class="list-body" id="sync-queue-list"><div class="list-item empty-item">Empty</div></div>
+  </div>
+  <div class="list-card">
+    <div class="list-header"><span class="list-title">Completed</span><span class="list-count" id="sync-done-count">0</span></div>
+    <div class="list-body" id="sync-done-list"><div class="list-item empty-item">—</div></div>
+  </div>
+</div>
+
+</main>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     TAB — AUDIO  (TrueHD -> DDP+Atmos / EAC3, solo audio)
+     ══════════════════════════════════════════════════════════════════════════ -->
+<div class="tab-panel" id="panel-audio">
+<main>
+
+<div class="card">
+  <h2>TrueHD / DTS → DD+ &nbsp;·&nbsp; solo audio (el vídeo se copia)</h2>
+  <div class="file-row">
+    <input class="inp" id="audio-file-input" type="text"
+      placeholder="Ruta a un MKV, o Browse →" autocomplete="off">
+    <button class="btn btn-amber" onclick="openBrowser('audio')">📁 Browse</button>
+    <button class="btn btn-purple" id="audio-add-btn" onclick="audioAdd()">▲ Añadir a la cola</button>
+    <button class="btn btn-green" id="audio-to-enc-btn" onclick="audioToEncoder()" title="Copia el fichero a la cola del Encoder de vídeo (encode_queue): reencoda vídeo + convierte audio">⚙ A cola de vídeo</button>
+  </div>
+  <div style="font-size:11px;color:var(--muted);margin-top:8px;">
+    Deja MKVs en <code>C:\Media\audio_queue</code> (o usa «Añadir»): el watcher convierte
+    <b>TrueHD+Atmos → DD+ JOC 768k</b> (vía DEE, conserva los objetos),
+    <b>TrueHD sin Atmos y DTS → DD+ 640k</b> (vía deew/DEE).
+    El resto de pistas, los subtítulos y el vídeo se copian sin tocar.
+    <br>Mismo routing que el Encoder, pero sin reencodear el vídeo.
+  </div>
+</div>
+
+<div class="progress-card pc-ups" id="audio-prog-card">
+  <div id="audio-filename" class="big-filename idle-text">Sin conversión activa</div>
+  <div class="progress-row">
+    <div class="pct-label idle" id="audio-pct" style="color:var(--purple)">—</div>
+    <div class="bar-wrap"><div class="bar-fill bar-purple" id="audio-bar" style="width:0%"></div></div>
+    <div class="eta-label" id="audio-mode-label"></div>
+  </div>
+  <div class="log-card" id="audio-log-card" style="display:none">
+    <div class="log-header"><span>ffmpeg / deew</span><span id="audio-log-count">—</span></div>
+    <div class="log-body" id="audio-log-body">—</div>
+  </div>
+  <div class="controls">
+    <button class="btn btn-red" id="audio-btn-cancel" disabled onclick="audioCancel()">✕ Cancelar</button>
+  </div>
+</div>
+
+<div class="lists-grid-2">
+  <div class="list-card">
+    <div class="list-header"><span class="list-title">Cola</span><span class="list-count" id="audio-q-count">0</span></div>
+    <div class="list-body" id="audio-queue-list"><div class="list-item empty-item">Vacía</div></div>
+  </div>
+  <div class="list-card">
+    <div class="list-header"><span class="list-title">Completadas</span><span class="list-count" id="audio-done-count">0</span></div>
+    <div class="list-body" id="audio-done-list"><div class="list-item empty-item">—</div></div>
+  </div>
+</div>
+
+</main>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     TAB — SUBS  (encode.ps1 -SubsOnly: OCR de subtítulos, vídeo y audio en copy)
+     ══════════════════════════════════════════════════════════════════════════ -->
+<div class="tab-panel" id="panel-subs">
+<main>
+
+<div class="card">
+  <h2>Subtítulos &nbsp;·&nbsp; OCR de PGS → SRT (el vídeo y el audio se copian)</h2>
+  <div class="file-row">
+    <input class="inp" id="subs-file-input" type="text"
+      placeholder="Ruta a un MKV, o Browse →" autocomplete="off">
+    <button class="btn btn-amber" onclick="openBrowser('subs')">📁 Browse</button>
+    <button class="btn btn-amber" id="subs-add-btn" onclick="subsAdd()">▲ Añadir a la cola</button>
+    <button class="btn" id="subs-fetch-btn" style="border-color:var(--green);color:var(--green)"
+            onclick="subsFetch()">🔍 Buscar subtítulos</button>
+  </div>
+  <div style="font-size:11px;color:var(--muted);margin-top:8px;">
+    Deja MKVs en <code>C:\Media\subs_queue</code> (o usa «Añadir»): se pasa
+    <b>encode.ps1 -SubsOnly</b>, que <b>copia vídeo y audio sin tocar</b> y solo procesa los
+    subtítulos — los <b>PGS</b> (imagen) se convierten a <b>SRT</b> por OCR (PgsToSrt + Tesseract)
+    y los de texto se conservan. El resultado va a <code>C:\Media\subs_done</code>.
+    <br>Mismo código que el Encoder (una sola rama), sin reencodear nada.
+  </div>
+</div>
+
+<div class="card" id="subs-fetch-card" style="display:none">
+  <h2>Búsqueda de subtítulos &nbsp;·&nbsp; biblioteca local → OpenSubtitles</h2>
+  <div id="subs-fetch-list"></div>
+</div>
+
+<div class="progress-card pc-subs" id="subs-prog-card">
+  <div id="subs-filename" class="big-filename idle-text">Sin trabajo activo</div>
+  <div class="progress-row">
+    <div class="pct-label idle" id="subs-pct" style="color:var(--amber)">—</div>
+    <div class="bar-wrap"><div class="bar-fill bar-amber" id="subs-bar" style="width:0%"></div></div>
+    <div class="eta-label" id="subs-mode-label"></div>
+  </div>
+  <div class="log-card" id="subs-log-card" style="display:none">
+    <div class="log-header"><span>OCR / ffmpeg</span><span id="subs-log-count">—</span></div>
+    <div class="log-body" id="subs-log-body">—</div>
+  </div>
+  <div class="controls">
+    <button class="btn btn-red" id="subs-btn-cancel" disabled onclick="subsCancel()">✕ Cancelar</button>
+  </div>
+</div>
+
+<div class="lists-grid-2">
+  <div class="list-card">
+    <div class="list-header"><span class="list-title">Cola</span><span class="list-count" id="subs-q-count">0</span></div>
+    <div class="list-body" id="subs-queue-list"><div class="list-item empty-item">Vacía</div></div>
+  </div>
+  <div class="list-card">
+    <div class="list-header"><span class="list-title">Completadas</span><span class="list-count" id="subs-done-count">0</span></div>
+    <div class="list-body" id="subs-done-list"><div class="list-item empty-item">—</div></div>
+  </div>
+</div>
+
+</main>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     TAB 3 — YT-DLP
+     ══════════════════════════════════════════════════════════════════════════ -->
+<div class="tab-panel" id="panel-ytdlp">
+<main>
+
+<div class="card">
+  <h2>Add Download</h2>
+  <div class="file-row">
+    <input class="inp blue" id="yt-url" type="text"
+      placeholder="Paste YouTube or any supported URL..." autocomplete="off">
+    <select class="sel" id="yt-quality" style="max-width:130px">
+      <option value="auto">Auto (best)</option>
+      <option value="4k">4K</option>
+      <option value="1080p">1080p</option>
+      <option value="720p">720p</option>
+      <option value="480p">480p</option>
+    </select>
+    <button class="btn btn-blue" id="yt-btn-add" onclick="ytAdd()">↓ Download</button>
+  </div>
+  <div class="title-preview" id="yt-title-preview">Paste a URL to fetch title...</div>
+</div>
+
+<div class="progress-card pc-ytdlp" id="yt-prog-card">
+  <div id="yt-title" class="big-filename idle-text">No active download</div>
+  <div id="yt-url-display" style="font-size:11px;color:var(--muted);margin-bottom:18px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
+  <div class="progress-row">
+    <div class="pct-label idle" id="yt-pct" style="color:var(--blue)">—</div>
+    <div class="bar-wrap"><div class="bar-fill bar-blue" id="yt-bar" style="width:0%"></div></div>
+    <div class="eta-label" id="yt-eta"></div>
+  </div>
+  <div class="stats-row">
+    <div class="stat"><div class="stat-label">Speed</div><div class="stat-value empty" id="yt-speed">—</div></div>
+    <div class="stat"><div class="stat-label">Size</div><div class="stat-value empty" id="yt-size">—</div></div>
+    <div class="stat"><div class="stat-label">Quality</div><div class="stat-value empty" id="yt-quality-stat">—</div></div>
+    <div class="stat"><div class="stat-label">Status</div><div class="stat-value empty" id="yt-status-stat">—</div></div>
+  </div>
+  <div class="log-card" id="yt-live-log" style="display:none">
+    <div class="log-header"><span>Live log</span><span id="yt-log-lines">—</span></div>
+    <div class="log-body" id="yt-log-body">—</div>
+  </div>
+  <div class="controls">
+    <button class="btn btn-red" id="yt-btn-cancel" disabled onclick="ytCancel()">✕ Cancel</button>
+  </div>
+</div>
+
+<div class="lists-grid-3col">
+  <div class="list-card">
+    <div class="list-header"><span class="list-title">Queue</span><span class="list-count" id="yt-q-count">0</span></div>
+    <div class="list-body" id="yt-queue-list"><div class="list-item empty-item">Empty</div></div>
+  </div>
+  <div class="list-card">
+    <div class="list-header"><span class="list-title">Finished</span><span class="list-count" id="yt-fin-count">0</span></div>
+    <div class="log-list-body" id="yt-fin-list"><div class="list-item empty-item">—</div></div>
+  </div>
+  <div class="list-card">
+    <div class="list-header">
+      <span class="list-title">History</span>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span class="list-count" id="yt-h-count">0</span>
+        <button class="btn btn-muted" style="font-size:10px;padding:3px 10px;" onclick="ytClearHistory()">Clear</button>
+      </div>
+    </div>
+    <div class="list-body" id="yt-hist-list"><div class="list-item empty-item">—</div></div>
+  </div>
+</div>
+
+</main>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     SHARED MODALS
+     ══════════════════════════════════════════════════════════════════════════ -->
+
+<!-- Aqui vivia el modal "TrueHD sin Atmos: keep o convert?". Eliminado el
+     19/08/2026: la politica es convertir TODO TrueHD desde hace tiempo, asi que
+     el watcher no volvia a escribir la senyal que lo abria y este modal era
+     inalcanzable. El badge "TrueHD" de la cola SI se queda: sigue avisando de a
+     que se va a convertir cada fichero. -->
+
+<!-- Log modal -->
+<div class="modal-overlay" id="log-modal">
+  <div class="modal-box">
+    <div class="modal-header">
+      <span class="modal-title" id="log-modal-title">Log</span>
+      <button class="modal-close" onclick="closeModal('log-modal')">✕</button>
+    </div>
+    <div class="modal-body" id="log-modal-body">Loading...</div>
+  </div>
+</div>
+
+<!-- File browser modal -->
+<div class="modal-overlay" id="browser-modal">
+  <div class="browser-modal">
+    <div class="modal-header">
+      <span class="modal-title">📁 Select Video File</span>
+      <button class="modal-close" onclick="closeModal('browser-modal')">✕</button>
+    </div>
+    <div class="browser-path" id="browser-path">C:\Media</div>
+    <div class="browser-body" id="browser-body">
+      <div class="browser-loading">Loading...</div>
+    </div>
+  </div>
+</div>
+
+
+
+<!-- El JavaScript vive en static/panel.js desde el 31/08/2026 (eran 83 KB
+     aqui dentro). Va EN ESTE MISMO SITIO, al final del body, porque el codigo
+     cuenta con que el DOM ya existe. -->
+<script src="{{ url_for('static', filename='panel.js') }}?v={{ v_js }}"></script>
+</body>
+</html>
