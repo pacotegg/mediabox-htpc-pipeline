@@ -54,11 +54,13 @@ Motor de audio único: `atmos-lib.ps1` (dot-sourced por `encode.ps1` y
 ## Política de calidad/tamaño actual
 
 ```
-Perfil:  1080p = ICQ puro (GQ 15) | 4K = QVBR con techo por tabla (GQ 18)
+Perfil:  las dos ramas en 'icq-red' (21/09/2026): ICQ (4K GQ 19, 1080p GQ 15) y,
+         al terminar el video, si gasta mas que el TARGET que 'techo' habria usado
+         se REPITE solo el video en QVBR con ese target (GQ 15/16).
 
-Pelicula  4K HDR 9.85 | 4K SDR 9.35 | 1080p HDR 5.5 | 1080p SDR 5.0
+Pelicula  4K HDR 9.0  | 4K SDR 8.5  | 1080p HDR 5.5 | 1080p SDR 5.0
 Serie     4K HDR 6.5  | 4K SDR 5.5  | 1080p HDR 4.5 | 1080p SDR 4.0
-Suelo     4K 8.5 (6.5 si >=210 min) | 1080p 4.5 (4.0)
+Suelo     4K 8.0 (6.5 si >=210 min) | 1080p 4.5 (4.0)
 ```
 
 Bloque en `encode.ps1`, sección "PERFIL DE CALIDAD" (variables `$CfgPerfil1080p`,
@@ -82,6 +84,9 @@ mejoraría nada: pasa por el mismo driver. Detalle en `CHANGELOG.md` (26/08).
 | `audio_compat.ps1`, `audio_recap.ps1` | Compatibilidad de códecs de audio y recorte al tope de bitrate |
 | `reordenar-pistas.ps1`, `inyectar-atmos.ps1`, `retrofit-reconstruir.ps1` | Operaciones de retrofit en lote sobre la biblioteca existente |
 | `pipeline-lock.ps1` | Lock compartido entre los tres pipelines |
+| `descargas-tanda.ps1` | Ciclo cerrado JDownloader → encode → tinyMediaManager → `E:\Series` / `E:\Peliculas`, por tandas de N títulos, sin llenar C: |
+| `jd-lib.ps1`, `jd-api-setup.ps1` | Cliente de la API local de JDownloader (`127.0.0.1:3128`) y su activación, de un solo uso |
+| `tandas-keepalive.ps1` | Red de seguridad de `descargas-tanda.ps1`: lo relanza tras un corte de luz o un reinicio, nunca tras una parada deliberada |
 | `webpanel/app.py` + `webpanel/templates/index.html` | Panel Flask (SSE), pestañas Encoder/Audio/Subs/Remux |
 | `webpanel/remuxlib.py`, `webpanel/subsfetch.py` | Lógica de remux y descarga de subtítulos del panel |
 | `ab-test.ps1`, `icq-probe.ps1`, `av1-vs-hevc.ps1`, `bench-atmos-parallel.ps1` | Herramientas de medición/A-B testing de parámetros de codificación |
