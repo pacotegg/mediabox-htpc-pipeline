@@ -58,9 +58,9 @@ param(
     #   Vf     -> $Denoise / $Detail  (~1898). NO dependen de la resolucion.
     #   Preset -> $Preset      (~331)
     [int]$HevcGq     = 15,
-    [string]$Rate    = "9.5M",
-    [string]$MaxR    = "12.8M",
-    [string]$BufS    = "19M",
+    [string]$Rate    = "9.0M",
+    [string]$MaxR    = "12.2M",
+    [string]$BufS    = "18M",
     [string]$Vf      = "vpp_qsv=denoise=7:detail=6:format=p010le",
     # El MISMO preset en los dos codecs: comparar veryslow contra el default
     # fue justo el error de la primera medida. Y es ademas el de produccion,

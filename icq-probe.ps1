@@ -60,7 +60,7 @@ param(
 # Se usa la MISMA forma que ab-test.ps1 a proposito: asi el test de espejos lee
 # los dos ficheros con el mismo patron.
 if ($Res -eq '1080p') { $dDn = 7; $dDt = 6; $dGq = 15; $dRate = '5.0M'; $dMaxR = '6.5M';  $dBufS = '10M' }
-else                  { $dDn = 7; $dDt = 6; $dGq = 15; $dRate = '9.5M'; $dMaxR = '12.8M'; $dBufS = '19M' }
+else                  { $dDn = 7; $dDt = 6; $dGq = 15; $dRate = '9.0M'; $dMaxR = '12.2M'; $dBufS = '18M' }
 $dPreset = 'medium'
 # ${dDn} y no $dDn: detras va un ':' y PowerShell lo leeria como calificador de
 # unidad, dejando la cadena del filtro rota.
