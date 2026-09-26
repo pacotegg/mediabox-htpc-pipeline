@@ -57,9 +57,24 @@ function Log($m) {
 }
 $ES = @('es','spa')
 
+# SIN '--' (17/09/2026). mkvmerge no conoce el separador '--': en modo
+# identificacion lo rechazaba ("no esta permitido para el modo de
+# identificacion") y devolvia un JSON sin 'tracks', y el script lo leia como
+# "sin pista en castellano". En modo mezcla intentaba abrir un fichero llamado
+# '--'. Resultado: las 182 de agosto y las 232 de hoy quedaron SALTADAS sin que
+# se reordenara NI UNA. La salida se lee en UTF-8 a proposito: mkvmerge escribe
+# UTF-8 y la consola es cp850, y los nombres con acentos salian rotos.
 function Get-Info([string]$f) {
-    $j = (& $MKVMERGE -J -- $f 2>$null) | Out-String
-    try { return (ConvertFrom-Json $j) } catch { return $null }
+    $antes = [Console]::OutputEncoding
+    try {
+        [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+        $j = (& $MKVMERGE -J $f 2>$null) | Out-String
+    } finally { [Console]::OutputEncoding = $antes }
+    try {
+        $o = ConvertFrom-Json $j
+        if (-not $o.tracks) { return $null }
+        return $o
+    } catch { return $null }
 }
 # Get-DurContenedor vive en atmos-lib.ps1 desde el 31/08/2026, pegada a
 # Get-DurVideo para que no vuelvan a confundirse: esta mide por la pista MAS
@@ -127,15 +142,15 @@ foreach ($x in $cola) {
         $motivo = 'mkvmerge no puede leerlo'
     } else {
         $aud = @($info.tracks | Where-Object { $_.type -eq 'audio' })
-        $es  = @($aud | Where-Object { $ES -contains ("" + $_.properties.language).ToLower() })
-        if ($es.Count -eq 0) {
+        $pistasEs  = @($aud | Where-Object { $ES -contains ("" + $_.properties.language).ToLower() })
+        if ($pistasEs.Count -eq 0) {
             $motivo = 'sin pista en castellano'
-        } elseif ($aud[0].id -eq $es[0].id) {
+        } elseif ($aud[0].id -eq $pistasEs[0].id) {
             $motivo = 'ya estaba la primera'
         } else {
             # Orden nuevo: todo igual, pero el castellano al frente del bloque de
             # audio. El resto conserva su orden relativo.
-            $idsAudio = @($es[0].id) + @($aud | Where-Object { $_.id -ne $es[0].id } | ForEach-Object { $_.id })
+            $idsAudio = @($pistasEs[0].id) + @($aud | Where-Object { $_.id -ne $pistasEs[0].id } | ForEach-Object { $_.id })
             $orden = @()
             $puestoAudio = $false
             foreach ($t in $info.tracks) {
@@ -145,7 +160,7 @@ foreach ($x in $cola) {
             }
             $antesDur = Get-DurContenedor $f
             $antesN   = $info.tracks.Count
-            & $MKVMERGE --gui-mode -o $tmpOut --track-order ($orden -join ',') -- $f 2>&1 |
+            & $MKVMERGE --gui-mode -o $tmpOut --track-order ($orden -join ',') $f 2>&1 |
                 Where-Object { $_ -match '#GUI#error' } | ForEach-Object { Log "    | $_" }
 
             if (-not (Test-Path -LiteralPath $tmpOut)) {
