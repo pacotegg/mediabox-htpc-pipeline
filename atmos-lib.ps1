@@ -591,6 +591,97 @@ function Get-DeeFps([string]$r) {
     return 'not_indicated'
 }
 
+function Write-TrueHDInfoLog {
+    <#
+      Deja en el log del trabajo lo que 'truehdd info' dice del stream: que
+      presentaciones trae, cuantos canales, si hay Atmos, el dialnorm.
+
+      POR QUE (13/09/2026): dos peliculas con doble Atmos salieron con la
+      SEGUNDA pista sin Atmos efectivo (la barra no lo reconoce) y no habia
+      forma de saber que habia decodificado truehdd para cada una, porque su
+      salida se borraba con los temporales. Esto es la evidencia que faltaba,
+      cuesta 10 s por pista y son 20 lineas de log.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Thd,
+        [string]$Truehdd = 'C:\scripts\bin\truehdd.exe',
+        [int]$AudioIndex = -1
+    )
+    if (-not (Test-Path -LiteralPath $Thd)) { return }
+    if (-not (Test-Path -LiteralPath $Truehdd)) { return }
+    $lineas = @()
+    try { $lineas = @(& $Truehdd info $Thd 2>&1 | ForEach-Object { "$_".Trim() } | Where-Object { $_ }) } catch { return }
+    if (-not $lineas.Count) { return }
+    Log "    [truehdd info] pista a:${AudioIndex}:"
+    foreach ($l in ($lineas | Select-Object -First 40)) { Log "      $l" }
+    if ($lineas.Count -gt 40) { Log "      ... ($($lineas.Count - 40) lineas mas)" }
+}
+
+function Write-TruehddSalidaLog {
+    <#
+      Vuelca al log del trabajo las lineas UTILES de la salida de truehdd
+      decode: todo menos las barras de progreso y el ruido repetitivo de
+      drc_start_up_gain. Antes esa salida se guardaba en un fichero temporal
+      que se BORRABA al terminar bien, asi que solo quedaba rastro cuando
+      truehdd fallaba del todo. Un fallo a medias -decodificar una
+      presentacion mas pobre de la que hay- no dejaba nada.
+    #>
+    param([string[]]$Lineas = @(), [int]$AudioIndex = -1, [int]$Tope = 40)
+    $utiles = @($Lineas | ForEach-Object { "$_".Trim() } | Where-Object {
+        $_ -and $_ -notmatch '[0-9]+(\.[0-9]+)?\s*%' -and $_ -notmatch '(?i)drc_start_up_gain' })
+    if (-not $utiles.Count) { return }
+    Log "    [truehdd decode] pista a:${AudioIndex} ($($utiles.Count) lineas de salida, sin progreso):"
+    foreach ($l in ($utiles | Select-Object -First $Tope)) { Log "      $l" }
+    if ($utiles.Count -gt $Tope) { Log "      ... ($($utiles.Count - $Tope) lineas mas)" }
+}
+
+function Get-DamfCanales {
+    <#
+      Cuantos canales tiene el master que decodifico truehdd, deducidos del
+      TAMANYO del .atmos.audio: PCM de 24 bits a 48 kHz, asi que
+      canales = bytes / (3 * 48000 * segundos).
+
+      ES LA MEDIDA QUE DELATA una decodificacion a medias. El 04/08/2026 la
+      pista 0 de Dragon dejo 21,9 GB de temporales y la pista 1 15,6 GB con la
+      misma duracion: 16 canales (objetos) contra ~10 (7.1.2 sin objetos). DEE
+      codifica los dos a "JOC con 15 objetos" y ni ffprobe ni MediaInfo los
+      distinguen despues; aqui, antes de DEE, si se ve.
+    #>
+    param([Parameter(Mandatory=$true)][string]$Damf, [double]$DurationSec = 0)
+    $audio = "$Damf.audio"
+    if (-not (Test-Path -LiteralPath $audio) -or $DurationSec -le 0) { return 0 }
+    $bytes = (Get-Item -LiteralPath $audio).Length
+    return [math]::Round($bytes / (3.0 * 48000.0 * $DurationSec), 1)
+}
+
+function Test-Ec3EsJoc {
+    <#
+      Comprueba con MediaInfo que el .ec3 que ha salido de DEE lleva JOC de
+      verdad y objetos dinamicos > 0. Devuelve un objeto con Ok, Joc, Objetos
+      y Motivo. Si MediaInfo no esta, Ok=$true con Motivo (no se bloquea el
+      pipeline por una herramienta ausente, pero queda dicho).
+
+      Es la verificacion que faltaba: hasta el 13/09/2026 lo unico que se
+      miraba de la salida era la duracion.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$Ec3,
+        [string]$MediaInfo = 'C:\scripts\DEE\MediaInfo.exe'
+    )
+    $r = [pscustomobject]@{ Ok = $true; Joc = $false; Objetos = 0; Motivo = '' }
+    if (-not (Test-Path -LiteralPath $MediaInfo)) { $r.Motivo = 'MediaInfo no esta; no se pudo verificar el JOC'; return $r }
+    $out = ''
+    try {
+        $out = (& $MediaInfo '--Inform=Audio;%Format_AdditionalFeatures%|%NumberOfDynamicObjects%|%Format_Commercial_IfAny%' $Ec3 2>&1 | Out-String).Trim()
+    } catch { $r.Motivo = "MediaInfo fallo: $($_.Exception.Message)"; return $r }
+    $p = $out -split '\|'
+    $r.Joc = ("$($p[0])" -match '(?i)JOC')
+    if ($p.Count -gt 1 -and "$($p[1])" -match '^\d+$') { $r.Objetos = [int]$p[1] }
+    if (-not $r.Joc) { $r.Ok = $false; $r.Motivo = "el .ec3 NO lleva JOC (MediaInfo: '$out')"; return $r }
+    if ($r.Objetos -le 0) { $r.Ok = $false; $r.Motivo = "el .ec3 lleva JOC pero 0 objetos dinamicos (MediaInfo: '$out')"; return $r }
+    return $r
+}
+
 function Get-TrueHDDialnorm {
     # Lee el 'Dialogue Level' del stream TrueHD via 'truehdd info' y lo devuelve
     # como entero dBFS en [-31..0]. 0 = no se pudo leer => el llamante NO fuerza
@@ -616,6 +707,12 @@ function Get-TrueHDDialnorm {
         # Parecia que cubria el limite superior y no cubria nada. Asi la intencion
         # -el rango que aceptan el XSD y el main.py de referencia- se lee entera y
         # de verdad se aplica por los dos lados.
+        # QUE SE VEA EL RECORTE. El 14/09/2026 el master de GoT S08E06 declaraba
+        # -37 dBFS y el log decia "custom_dialnorm=-31 dB (Dialogue Level del
+        # master)": era el tope, no el master. Todas las pistas del 04/08 decian
+        # "-31 del master" por lo mismo. El valor no puede ser otro -DEE no
+        # admite menos-, pero el log tiene que contar lo que paso.
+        if ($v -lt -31) { Log "    [ddp] Dialogue Level del master: $v dBFS, por debajo del minimo de DEE (-31): se usa -31." }
         return [math]::Max(-31, [math]::Min(0, $v))
     }
     return 0
@@ -717,9 +814,20 @@ function Invoke-FfmpegProgress {
     $argline = ($all | ForEach-Object {
         if ($_ -match '[\s"()]') { '"' + ($_ -replace '"','\"') + '"' } else { "$_" }
     }) -join ' '
+    # EL STDERR VA A UN FICHERO, no heredado. Sin redirigir, lo que ffmpeg
+    # escriba cae en el stderr del WATCHER: el 13/09/2026 aparecio un
+    # watcher-watcher-video.err.log de 950 MB con 7,5 millones de veces el
+    # mismo aviso del muxer de TrueHD ('non monotonically increasing dts', uno
+    # por paquete, y de nivel ERROR asi que -loglevel error no lo calla). Once
+    # extracciones de respaldo bastaron. $ProgFile no lleva nombre de pelicula
+    # -solo fecha, PID e indice-, asi que no hay corchetes que Start-Process
+    # tome por comodin (ver encode.ps1, $FfErr).
+    $errFile = "$ProgFile.err"
+    Remove-Item -LiteralPath $errFile -ErrorAction SilentlyContinue
     $proc = $null
     try {
-        $proc = Start-Process -FilePath $Ffmpeg -ArgumentList $argline -NoNewWindow -PassThru -ErrorAction Stop
+        $proc = Start-Process -FilePath $Ffmpeg -ArgumentList $argline -NoNewWindow -PassThru `
+                              -RedirectStandardError $errFile -ErrorAction Stop
     } catch {
         Log "    [ffmpeg] ERROR al lanzar: $_"
         return $false
@@ -747,6 +855,22 @@ function Invoke-FfmpegProgress {
     }
     $proc.WaitForExit()
     Remove-Item -LiteralPath $ProgFile -ErrorAction SilentlyContinue
+    # Al log SOLO lo que no sea el aviso benigno, y con tope: si ffmpeg fallo
+    # de verdad, las primeras lineas lo dicen; las 700.000 siguientes no.
+    try {
+        if (Test-Path -LiteralPath $errFile) {
+            $utiles = @(Get-Content -LiteralPath $errFile -ErrorAction Stop |
+                        Where-Object { $_ -and $_ -notmatch 'non monotonically increasing dts' } |
+                        Select-Object -First 20)
+            if ($utiles.Count -or $proc.ExitCode -ne 0) {
+                Log ("    [ffmpeg] exit={0}; stderr ({1} linea(s) utiles):" -f $proc.ExitCode, $utiles.Count)
+                foreach ($l in $utiles) { Log "      $l" }
+            }
+        }
+    } catch {
+        Log "    [ffmpeg] no pude leer su stderr ($errFile): $($_.Exception.Message)"
+    }
+    Remove-Item -LiteralPath $errFile -ErrorAction SilentlyContinue
     return ($proc.ExitCode -eq 0)
 }
 
@@ -1394,9 +1518,17 @@ function Start-DdpTracksParallel {
             # TRES watchers y stop-mediabox. Con 'd_*' (primera version) solo lo
             # habrian recogido el de audio y stop-mediabox: en la cola de VIDEO
             # estos ficheros habrian quedado ahi para siempre tras un taskkill.
-            SlotLog  = Join-Path $BigTmp ("dee_parlog_{0}_{1}.log"  -f $stamp, $t.Idx)
-            Result   = Join-Path $BigTmp ("dee_parres_{0}_{1}.json" -f $stamp, $t.Idx)
-            Progress = Join-Path $BigTmp ("dee_parprog_{0}_{1}.txt" -f $stamp, $t.Idx)
+            # EL PID VA EN EL NOMBRE, y no es cosmetico. El sello es AL SEGUNDO
+            # y encode-watch lanza las dos ranuras a la vez: dos trabajos
+            # concurrentes con el mismo Idx caian en el MISMO dee_parres_*.json
+            # y uno leia el resultado del otro, o sea la ruta del .ec3 AJENO.
+            # Consecuencia real (09/09/2026): el S03E01 se muxeo con el audio
+            # del S02E10 y el S02E06 con el del S02E07. La guarda de integridad
+            # lo cazo las dos veces, pero por los pelos: si los dos episodios
+            # hubieran durado lo mismo, habria pasado en silencio.
+            SlotLog  = Join-Path $BigTmp ("dee_parlog_{0}_{1}_{2}.log"  -f $stamp, $PID, $t.Idx)
+            Result   = Join-Path $BigTmp ("dee_parres_{0}_{1}_{2}.json" -f $stamp, $PID, $t.Idx)
+            Progress = Join-Path $BigTmp ("dee_parprog_{0}_{1}_{2}.txt" -f $stamp, $PID, $t.Idx)
             Proc     = $null
         }
     }
@@ -1558,6 +1690,7 @@ function Wait-DdpTracksParallel {
             $out += [pscustomobject]@{
                 AudioIndex = [int]$r.audioIndex; Ok = [bool]$r.ok; Failure = "$($r.failure)"
                 OutFile = "$($r.outFile)"; OutBytes = [long]$r.outBytes; Seconds = [double]$r.seconds
+                DamfCanales = $(if ($null -ne $r.damfCanales) { [double]$r.damfCanales } else { 0.0 })
             }
         } else {
             Log "    [par] la pista $($s.Idx) no dejo resultado (worker muerto): se rehara en secuencial."
@@ -1834,6 +1967,9 @@ function Convert-TrueHDToDDP {
         [scriptblock]$OnProgress = $null
     )
     $global:DdpLastFailure = ''
+    # Canales del DAMF de ESTA llamada, para que el llamante pueda comparar las
+    # pistas de una misma pelicula (ver audio_encode.ps1).
+    $script:DdpUltimoDamfCanales = 0
     if (-not $BigTmp) { $BigTmp = Get-BigTmp -Fallback $Tmp }
     New-Item -ItemType Directory -Force -Path $BigTmp -ErrorAction SilentlyContinue | Out-Null
 
@@ -1849,7 +1985,11 @@ function Convert-TrueHDToDDP {
         return $false
     }
 
-    $tag = "{0}_{1}" -f (Get-Date -Format 'yyyyMMdd_HHmmss'), $AudioIndex
+    # CON $PID. Solo fecha+indice es la misma colision que ya mordio dos veces
+    # entre las dos ranuras (encode.ps1 el 08/09/2026 y dee_par* aqui mismo):
+    # dos trabajos arrancan el mismo segundo y compartirian thd_*.thd, el
+    # prefijo del que se lee el dialnorm y el fichero de progreso.
+    $tag = "{0}_{1}_{2}" -f (Get-Date -Format 'yyyyMMdd_HHmmss'), $PID, $AudioIndex
     $thd = Join-Path $BigTmp "thd_${tag}.thd"
     $ok  = $false
     # Todo lo que hay que borrar pase lo que pase. Se rellena segun se van
@@ -1939,7 +2079,11 @@ function Convert-TrueHDToDDP {
                 & $Ffmpeg -y -loglevel error -t 10 -i $InputFile -map "0:a:$AudioIndex" `
                           -c:a copy -f truehd $pre 2>&1 | Out-Null
                 $dnPipe = 0
-                if (Test-Path -LiteralPath $pre) { $dnPipe = Get-TrueHDDialnorm -Thd $pre -Truehdd $Truehdd }
+                if (Test-Path -LiteralPath $pre) {
+                    $dnPipe = Get-TrueHDDialnorm -Thd $pre -Truehdd $Truehdd
+                    # La evidencia que faltaba: que presentaciones trae el stream.
+                    Write-TrueHDInfoLog -Thd $pre -Truehdd $Truehdd -AudioIndex $AudioIndex
+                }
                 Remove-Item -LiteralPath $pre -Force -ErrorAction SilentlyContinue
 
                 Log "    [ddp] extraccion+decodificacion por TUBERIA (sin .thd intermedio)..."
@@ -1950,7 +2094,12 @@ function Convert-TrueHDToDDP {
                           -ProgFile (Join-Path $Tmp "ffprog_${tag}.txt") `
                           -DurationSec $DurationSec -OnProgress $OnProgress -LogFile $pipeLog
                 $damfOk = $rp.Ok -and (Test-Path -LiteralPath $damf)
+                # Lo que dijo truehdd, tambien cuando SALE BIEN: es donde se ve
+                # si decodifico la presentacion de objetos o una mas pobre.
+                Write-TruehddSalidaLog -Lineas @("$($rp.TruehddErr)" -split "`n") -AudioIndex $AudioIndex
                 if ($damfOk) {
+                    $script:DdpUltimoDamfCanales = Get-DamfCanales -Damf $damf -DurationSec $DurationSec
+                    Log ("    [ddp] DAMF de a:{0}: {1:N1} canales ({2:N1} GB)" -f $AudioIndex, $script:DdpUltimoDamfCanales, ((Get-Item -LiteralPath "$damf.audio").Length/1GB))
                     $dnEff = if ($Dialnorm -ne 0) { $Dialnorm } else { $dnPipe }
                     if ($dnEff -ne 0) { Log "    [ddp] custom_dialnorm=$dnEff dB (Dialogue Level del master)" }
                     else              { Log "    [ddp] custom_dialnorm: no legible -> DEE medira (measure_only)" }
@@ -2010,6 +2159,7 @@ function Convert-TrueHDToDDP {
             $dnEff = if ($Dialnorm -ne 0) { $Dialnorm } else { Get-TrueHDDialnorm -Thd $thd -Truehdd $Truehdd }
             if ($dnEff -ne 0) { Log "    [ddp] custom_dialnorm=$dnEff dB (Dialogue Level del master)" }
             else              { Log "    [ddp] custom_dialnorm: no legible -> DEE medira (measure_only)" }
+            Write-TrueHDInfoLog -Thd $thd -Truehdd $Truehdd -AudioIndex $AudioIndex
 
             # 2) truehdd -> DAMF
             # --progress es imprescindible: con --loglevel off truehdd no imprime
@@ -2077,7 +2227,14 @@ function Convert-TrueHDToDDP {
                 Remove-Item -LiteralPath $thdLog -ErrorAction SilentlyContinue
                 return $false
             }
+            # Antes se borraba sin mas: la salida de truehdd solo se conservaba si
+            # NO habia DAMF. Un DAMF a medias (presentacion pobre) no dejaba rastro.
+            if (Test-Path -LiteralPath $thdLog) {
+                Write-TruehddSalidaLog -Lineas @(Get-Content -LiteralPath $thdLog -ErrorAction SilentlyContinue) -AudioIndex $AudioIndex
+            }
             Remove-Item -LiteralPath $thdLog -ErrorAction SilentlyContinue
+            $script:DdpUltimoDamfCanales = Get-DamfCanales -Damf $damf -DurationSec $DurationSec
+            Log ("    [ddp] DAMF de a:{0}: {1:N1} canales ({2:N1} GB)" -f $AudioIndex, $script:DdpUltimoDamfCanales, ((Get-Item -LiteralPath "$damf.audio").Length/1GB))
             }   # <- fin del camino largo (solo se recorre si la tuberia no dio DAMF)
 
 
@@ -2150,11 +2307,35 @@ function Convert-TrueHDToDDP {
                 $dEc3 = Get-Ec3DurationSec -Path $ec3 -Ffprobe $FfprobeChk
                 $refDur = Get-AudioTrackDurationSec -InputFile $InputFile -AudioIndex $AudioIndex -Ffprobe $FfprobeChk -ContainerHintSec $DurationSec
                 if ($refDur -gt 0) { $tol = 10; $refTxt = 'la pista' } else { $refDur = $DurationSec; $tol = 30; $refTxt = 'el contenedor' }
+                # Se apunta SIEMPRE, no solo al fallar. El 09/09/2026 un .ec3
+                # salio 71,6 s mas largo que su pista y esta guarda no salto:
+                # sin los numeros en el log no hay forma de saber si midio mal,
+                # si no llego a medir, o si el desvio aparecio despues de aqui.
+                Log ("    [ddp] integridad: .ec3 {0:N1}s contra {1} {2:N1}s (tol {3}s)" -f $dEc3, $refTxt, $refDur, $tol)
                 if ($dEc3 -gt 0 -and [math]::Abs($dEc3 - $refDur) -gt $tol) {
                     Log ("    [ddp] ERROR de INTEGRIDAD: el .ec3 dura {0:N0}s y {1} {2:N0}s ({3:N0}s de desvio, tol {4}s). Pista TRUNCADA." -f $dEc3, $refTxt, $refDur, [math]::Abs($dEc3 - $refDur), $tol)
                     Log  "    [ddp] no se degrada a EAC3: se trata como fallo transitorio para que el trabajo se reintente."
                     $durOk = $false
                     $global:DdpLastFailure = 'diskfull'
+                }
+            }
+
+            # JOC DE VERDAD, no solo duracion. Hasta el 13/09/2026 un .ec3 con el
+            # Atmos degradado pasaba este punto igual que uno bueno, y de ahi a la
+            # biblioteca y a la cache. Si no lleva JOC u objetos, se falla ALTO y
+            # el llamante conserva la pista TrueHD original (que es lo que hace
+            # audio_encode.ps1 cuando la conversion no es 'diskfull'): perder la
+            # conversion es recuperable; meter una pista mala en la biblioteca no.
+            if ($durOk -and (Test-Path -LiteralPath $ec3)) {
+                $joc = Test-Ec3EsJoc -Ec3 $ec3
+                if ($joc.Ok) {
+                    if ($joc.Motivo) { Log "    [ddp] aviso: $($joc.Motivo)" }
+                    else { Log ("    [ddp] verificado: .ec3 con JOC y {0} objetos dinamicos" -f $joc.Objetos) }
+                } else {
+                    Log "    [ddp] ERROR de VERIFICACION: $($joc.Motivo)"
+                    Log "    [ddp] no se acepta el .ec3: se conserva la pista original en vez de meter un Atmos roto."
+                    $durOk = $false
+                    $global:DdpLastFailure = 'sinjoc'
                 }
             }
 
@@ -3040,7 +3221,7 @@ function Rebuild-Container {
             # cambiar nada observable del contenedor.
             $titCont = "$($json.container.properties.title)"
             if ($titCont) { $mkvArgs += @("--title",$titCont) }
-            $order = @(); $i = 0
+            $orden = New-Object System.Collections.Generic.List[object]; $i = 0
             foreach ($t in $json.tracks) {
                 # Las vacias que se han apartado arriba ya no estan en $files.
                 if (-not $files.ContainsKey([int]$t.id)) { continue }
@@ -3071,7 +3252,22 @@ function Rebuild-Container {
                     $mkvArgs += @("--timestamps", ("0:{0}" -f $tsFiles[[int]$t.id]))
                 }
                 $mkvArgs += @($files[[int]$t.id])
-                $order += ("{0}:0" -f $i); $i++
+                $orden.Add([pscustomobject]@{ e = ("{0}:0" -f $i); tipo = "$($t.type)"; lang = "$lang".ToLower() }); $i++
+            }
+            # EL CASTELLANO, PRIMERA PISTA DE AUDIO (17/09/2026). Plex en la Samsung
+            # solo hace Direct Play de la PRIMERA pista de audio (ver
+            # reordenar-pistas.ps1) y AVPlay arranca siempre con ella: elegir la
+            # castellana en segunda posicion es transcodificar en Plex y cambiar
+            # de pista en caliente en Media Watch, con el audio descuadrado. La
+            # bandera 'default' no basta; manda el ORDEN. Todo lo demas conserva
+            # su orden relativo. Asi los ficheros nuevos ya salen bien y no hace
+            # falta la pasada de retrofit sobre ellos.
+            $primerEs = $orden | Where-Object { $_.tipo -eq 'audio' -and $_.lang -in @('spa','es') } | Select-Object -First 1
+            $order = @(); $puestoAudio = $false
+            foreach ($o in $orden) {
+                if ($o.tipo -eq 'audio' -and -not $puestoAudio) { if ($primerEs) { $order += $primerEs.e }; $puestoAudio = $true }
+                if ($primerEs -and $o.e -eq $primerEs.e) { continue }
+                $order += $o.e
             }
             $mkvArgs += @("--track-order",($order -join ","))
             # Cada adjunto con su nombre y su tipo MIME originales: las opciones van

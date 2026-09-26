@@ -84,4 +84,8 @@ if (Test-Path -LiteralPath $OutFile) { $sz = (Get-Item -LiteralPath $OutFile).Le
     outFile    = $OutFile
     outBytes   = $sz
     seconds    = [math]::Round($sw.Elapsed.TotalSeconds, 1)
+    # Canales del master decodificado (lo mide Convert-TrueHDToDDP). El padre
+    # compara las pistas de una misma pelicula: si una tiene 16 y otra 10, la
+    # segunda se decodifico sin objetos y hay que decirlo alto.
+    damfCanales = [double]$script:DdpUltimoDamfCanales
 } | ConvertTo-Json -Compress | Set-Content -LiteralPath $ResultFile -Encoding UTF8
