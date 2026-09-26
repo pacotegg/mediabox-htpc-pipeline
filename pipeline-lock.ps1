@@ -181,6 +181,54 @@ function Test-LockOwnerAlive {
     return $true
 }
 
+function Get-OtraInstancia {
+    <#
+      Devuelve el PID de OTRA instancia viva de ESTE MISMO watcher, o 0.
+
+      NO BASTA CON QUE EXISTA UN PROCESO CON ESE NUMERO. Windows reutiliza los
+      PID, y el 04/09/2026 paso exactamente eso: subs-watch murio llevando el
+      PID 3588, un svchost.exe heredo el numero a las 19:25:43 y el arranque se
+      rindio tres veces seguidas con 'subs-watch ya esta corriendo (PID 3588)'.
+      El pipeline de subtitulos se quedo PARADO, sin una linea que lo dijera, y
+      no se habria recuperado solo: ese svchost dura lo que dure la sesion.
+
+      Es el mismo agujero que Test-LockOwnerAlive cerro el 01/09/2026 para el
+      fichero de lock, y que se quedo abierto en los tres watchers -cada uno con
+      su copia del mismo 'if'-. Aqui se cierra mirando la LINEA DE COMANDOS: el
+      numero solo cuenta si ese proceso esta ejecutando el mismo script.
+
+      SI NO SE PUEDE LEER LA LINEA DE COMANDOS se devuelve 0 (arrancar). Es al
+      reves que en el lock, y a proposito: alli 'bloquear de mas' es recuperable
+      y entrar dos veces no. Aqui es al contrario -no arrancar deja el pipeline
+      muerto hasta que pase una persona, y un watcher de mas lo frena el propio
+      pipeline.lock-, asi que en la duda se arranca.
+    #>
+    param(
+        [Parameter(Mandatory=$true)][string]$PidFile,
+        # Trozo de la linea de comandos que identifica al watcher, p.ej.
+        # 'subs-watch.ps1'. Sin comodines: se compara con -like '*marca*'.
+        [Parameter(Mandatory=$true)][string]$Marca
+    )
+    if (-not (Test-Path -LiteralPath $PidFile)) { return 0 }
+    $txt = @(Get-Content -LiteralPath $PidFile -ErrorAction SilentlyContinue)
+    if ($txt.Count -eq 0) { return 0 }
+    $num = 0
+    # Con cultura INVARIANTE, como manda la regla de este repositorio: aqui un
+    # PID es solo digitos y daria igual, pero la excepcion de hoy es la que
+    # manyana se copia a un sitio donde si importa.
+    if (-not [int]::TryParse("$($txt[0])".Trim(),
+                             [System.Globalization.NumberStyles]::Integer,
+                             [System.Globalization.CultureInfo]::InvariantCulture,
+                             [ref]$num)) { return 0 }
+    if ($num -le 0 -or $num -eq $PID) { return 0 }
+    $p = $null
+    try { $p = Get-CimInstance Win32_Process -Filter "ProcessId=$num" -ErrorAction Stop } catch { return 0 }
+    if (-not $p) { return 0 }
+    if (-not $p.CommandLine) { return 0 }
+    if ($p.CommandLine -like "*$Marca*") { return $num }
+    return 0
+}
+
 function Enter-PipelineLock {
     <#
       Intenta coger el lock. Devuelve $true solo si lo ha conseguido.

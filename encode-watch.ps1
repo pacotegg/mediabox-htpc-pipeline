@@ -89,12 +89,13 @@ $RunningMinAgeHours = 2     # y solo con fuentes de mas de N horas
 $PsExe = (Get-Process -Id $PID).Path
 
 # ── Single-instance guard ─────────────────────────────────────────
-if (Test-Path $WatcherPid) {
-    $existing = Get-Content $WatcherPid -ErrorAction SilentlyContinue
-    if ($existing -and (Get-Process -Id $existing -ErrorAction SilentlyContinue)) {
-        Write-Host "encode-watch ya esta corriendo (PID $existing) - saliendo."
-        exit
-    }
+# Get-OtraInstancia (pipeline-lock.ps1) mira TAMBIEN la linea de comandos: un
+# PID reciclado por otro proceso daba 'ya esta corriendo' para siempre y dejaba
+# el pipeline parado. Paso el 04/09/2026 con este mismo guard.
+$otraInstancia = Get-OtraInstancia -PidFile $WatcherPid -Marca 'encode-watch.ps1'
+if ($otraInstancia) {
+    Write-Host "encode-watch ya esta corriendo (PID $otraInstancia) - saliendo."
+    exit
 }
 $PID | Set-Content -LiteralPath $WatcherPid
 
@@ -111,13 +112,15 @@ if (-not (Test-Path -LiteralPath $FFPROBE)) {
 # BIT IDENTICAS a la del encode en solitario, o sea que la concurrencia no
 # altera el bitstream. Un solo encode NO satura la GPU.
 #
-# SIGUE EN 1 A PROPOSITO. Subirlo a 2 no rompe nada del pipeline -encode.ps1
-# aisla por -Slot sus ficheros de estado y sus temporales, y Clear-JobTemps
-# barre el marcador de todas las ranuras- pero deja el PANEL medio ciego: lee
-# 'encode_status', 'encode_pid' y 'encode_ffprog' por nombre FIJO, asi que veria
-# solo la ranura 1 y el boton Stop mataria a esa. Y el Stop es lo que salva un
-# trabajo que va mal. Se sube cuando el panel sepa de las dos.
-$MaxSlots = 1
+# EN 2 DESDE EL 04/09/2026. Lo que faltaba era el panel, que leia
+# 'encode_status', 'encode_pid' y 'encode_ffprog' por nombre FIJO: veia solo la
+# ranura 1 y su boton Stop mataba solo a esa, que es lo que salva un trabajo que
+# va mal. Ya no: app.py saca cada ranura de enc_job_view -la misma cuenta que la
+# barra de la 1-, el panel pinta una barra por trabajo y el Stop las mata todas.
+#
+# Volver a 1 es cambiar este numero y nada mas: no hay ningun otro sitio que
+# haya que tocar a la vez.
+$MaxSlots = 2
 
 New-Item -ItemType Directory -Force -Path $Watch,$Running,$EncodedDir,$Tmp | Out-Null
 Write-Host "Watching: $Watch (PID $PID)"
@@ -376,6 +379,11 @@ while ($true) {
                 '-TruehdMode', $j.Thd,
                 '-RateMode',   $j.Modo,
                 '-Slot',       "$ranura"
+                # El TAMANYO DEL LOTE, no $MaxSlots: lo que importa es cuantos
+                # trabajos van a estar vivos a la vez de verdad. Con un solo
+                # fichero en la cola, $MaxSlots vale 2 pero el lote es 1 y ese
+                # trabajo debe conservar sus 2 pistas de audio en paralelo.
+                '-Slots',      "$($lote.Count)"
             )
             if ($j.TgtMbps -gt 0) {
                 # Con cultura INVARIANTE: en es-ES el ToString() normal daria

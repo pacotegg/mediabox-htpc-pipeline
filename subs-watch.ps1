@@ -88,12 +88,13 @@ function Clean-JobLeftovers {
 }
 
 # ---- Instancia unica ----------------------------------------------
-if (Test-Path -LiteralPath $WatcherPid) {
-    $existing = Get-Content -LiteralPath $WatcherPid -ErrorAction SilentlyContinue
-    if ($existing -and (Get-Process -Id $existing -ErrorAction SilentlyContinue)) {
-        Write-Host "subs-watch ya esta corriendo (PID $existing) - saliendo."
-        exit
-    }
+# Get-OtraInstancia (pipeline-lock.ps1) mira TAMBIEN la linea de comandos: un
+# PID reciclado por otro proceso daba 'ya esta corriendo' para siempre y dejaba
+# el pipeline parado. Paso el 04/09/2026 con este mismo guard.
+$otraInstancia = Get-OtraInstancia -PidFile $WatcherPid -Marca 'subs-watch.ps1'
+if ($otraInstancia) {
+    Write-Host "subs-watch ya esta corriendo (PID $otraInstancia) - saliendo."
+    exit
 }
 New-Item -ItemType Directory -Force -Path $Watch,$Running,$Done,$Tmp | Out-Null
 $PID | Set-Content -LiteralPath $WatcherPid
