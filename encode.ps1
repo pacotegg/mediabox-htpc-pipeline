@@ -86,7 +86,25 @@ param(
     # LA RANURA 1 SE COMPORTA EXACTAMENTE COMO ANTES: mismo prefijo 'encode',
     # mismos nombres. Es deliberado, para que este cambio no toque nada del
     # camino que ya funciona ni del panel.
-    [ValidateRange(1, 4)][int]$Slot = 1
+    [ValidateRange(1, 4)][int]$Slot = 1,
+
+    # CUANTOS TRABAJOS DE VIDEO CORREN EN ESTE LOTE (no cuantos caben).
+    #
+    # Sirve para UNA cosa: repartir el paralelismo de DEE. Dentro de un
+    # trabajo se convierten 2 pistas a la vez (1,62x medido el 06/08/2026),
+    # pero con DOS trabajos vivos eso son 4 cadenas truehdd+dee simultaneas y
+    # cada una necesita el .thd y el DAMF A LA VEZ: unos 40 GB en 4K. En
+    # G:\MediaTmp (223 GB) cuatro no caben con los dos vid_ de por medio.
+    #
+    # Y EL CHEQUEO DE ESPACIO NO LO ARREGLA SOLO: los dos trabajos arrancan en
+    # el mismo segundo y los dos LEEN EL MISMO ESPACIO LIBRE antes de que
+    # ninguno haya reservado nada. Medido en la tanda del 04/09/2026: los dos
+    # logs dicen 'espacio OK en G:\MediaTmp : 200.7 GB libres, estimados
+    # 44.6 GB'. Ese dia sobraba sitio; con dos 4K de dos pistas Atmos, no.
+    #
+    # Con 2 trabajos -> 1 pista cada uno: siguen siendo 2 cadenas DEE a la vez
+    # -el MISMO paralelismo agregado- con la mitad de disco.
+    [ValidateRange(1, 4)][int]$Slots = 1
 )
 
 $ErrorActionPreference = "Continue"
@@ -232,8 +250,38 @@ $ParallelAudioVideo = $true
 # El GQ se queda en 15 y ES LO CORRECTO bajo 'techo': se eligio el 07/08 para que
 # NO fuera el limite, y con Traffic pidiendo 16 contra un target de 7,5 sigue sin
 # serlo. No hay nada mas que tocar.
-$CfgPerfil1080p = 'techo'
-$CfgPerfil4K    = 'techo'
+#
+#  'icq-red' (21/09/2026): ICQ CON RED. Es la unica "mezcla" posible de los dos
+#            modos, y va por software, porque dentro de ffmpeg/QSV no existe:
+#            esta medido que cualquier opcion de bitrate saca al encoder de ICQ
+#            (-b:v lo vuelve QVBR e infla lo facil; -maxrate solo se dispara;
+#            AVBR llena el objetivo; max_frame_size/min_qp/extbrc son inertes
+#            por el BRC de VDENC). Y proyectar el tamano a mitad de encode
+#            tampoco vale (26/08: error del 18,5 % al 25 %, en los dos sentidos).
+#            Lo que SI se puede: encodear el video en ICQ y, CUANDO TERMINA,
+#            medir lo que ha gastado contra lo que 'techo' habria pedido: el
+#            $Target final de la cadena (tabla, techo de $CeilGb por duracion,
+#            tope 70 %, "nunca mas que la fuente"). Si gasta eso o menos, se
+#            queda tal cual (sin inflar lo facil). Si se pasa -grano-, se REPITE
+#            solo la pasada de video en 'techo', con ese mismo target. El audio
+#            (los .ec3 de DEE) no se rehace. O sea: ICQ donde ahorra, 'techo'
+#            donde ICQ engordaria; el fichero nunca sale mayor que con 'techo'
+#            (salvo el ~10 % de relleno que 'techo' deja sin usar).
+#            Peor caso = exactamente lo de hoy + el tiempo de la pasada tirada.
+#            Con lo medido hasta ahora (n pequenya): en 4K se paso 1 de 4 (El
+#            Bueno El Feo Y El Malo, 17,1 GiB), en 1080p 0 de 5; y las fuentes
+#            pobres siguen yendo a 'techo' de antemano por la guarda del 27/08.
+#            El campo icq_red de completed.jsonl cuenta cuantas veces salta.
+$CfgPerfil1080p = 'icq-red'
+$CfgPerfil4K    = 'icq-red'
+# Holgura de la red: solo se repite si el video ICQ supera el limite en mas de
+# este factor. Empezo en 1.05 (para el error del audio estimado en el techo de
+# tamano), bajo a 1.0 la misma tarde cuando el limite paso a ser el TARGET, y
+# quedo en 1.03 esa noche a peticion del usuario: "Sangre por sangre" se
+# repitio entera (30 min) por pasarse 0,03 M (9,53 contra 9,5) y la repeticion
+# salio a 9,45, o sea el mismo fichero. Con 1.03 no se repite por un pelo, a
+# cambio de que un ICQ pueda salir hasta un 3 % por encima del target.
+$IcqRedHolgura = 1.03
 #
 #  GQ de cada rama en modo 'icq'. En QSV un GQ MAS ALTO = MENOS calidad y
 #  menos bitrate; cada punto vale del orden del 20 % de bitrate.
@@ -246,7 +294,11 @@ $CfgPerfil4K    = 'techo'
 #           pedida: solo se deja de inflar las escenas faciles.
 #  Para probar otro punto, cambia el numero y encodea: no hay nada mas que
 #  tocar. Sube el numero si quieres menos tamano, bajalo si quieres mas calidad.
-$CfgGqIcq4K    = 18
+#  4K: 18 -> 19 el 21/09/2026, a peticion del usuario tras mirar recortes 1:1
+#  del UHD original de "El Bueno El Feo Y El Malo" (grano de 35 mm). Medido en
+#  ICQ con los args de produccion: GQ 19 ahorra -12,8 % (nocturno) y -9,5 %
+#  (Sad Hill). El denoise NO era palanca ahi: de 0 a 20 movia el 0,2-0,8 %.
+$CfgGqIcq4K    = 19
 $CfgGqIcq1080p = 15
 # ============================================================================
 
@@ -333,6 +385,16 @@ $PYTHON              = 'C:\Users\HTPC\AppData\Local\Programs\Python\Python314\py
 if ($FetchSubs -and -not (Test-Path -LiteralPath $PYTHON)) {
     $FetchSubs = $false
 }
+
+# Las pistas de texto NATIVAS (del propio contenedor) se copiaban SIN
+# VERIFICAR nunca su sincronia -a diferencia del PGS por OCR, y de subsfetch
+# cuando busca fuera, que si comprueban-. Si el rip trae un SRT descuadrado,
+# entraba igual. Usa el mismo verificar_sync (subsfetch.py, arreglado el
+# 25/09/2026: canal segun canales reales, deriva de velocidad, VAD como
+# segunda opinion) por el modo estrecho --verificar-srt. A $false, las
+# nativas se copian tal cual, como antes de este cambio.
+$VerifySubSync = $true
+if ($VerifySubSync -and -not (Test-Path -LiteralPath $PYTHON)) { $VerifySubSync = $false }
 
 # -- Preset del encoder --------------------------------------------
 # 30/07: cambiado de 'veryslow' a 'medium'. El driver COLAPSA los siete presets
@@ -618,9 +680,13 @@ $PidFile     = Join-Path $Tmp "${StatePfx}_pid"
 # Solo el stamp, NO $Name: los nombres de peli traen corchetes ("[UHDReescalado
 # 2160p HDR]") y Start-Process -RedirectStandardError trata la ruta como patron
 # WILDCARD -en PowerShell [...] es una clase de caracteres-, no la resuelve a un
-# fichero y revienta con $proc=$null -> "Failed (ffmpeg no arranco)". El stamp
-# basta (solo corre un encode a la vez) y el barrido encode_ff_stderr_* lo casa.
-$FfErr       = Join-Path $Tmp "encode_ff_stderr_${stamp}.txt"
+# fichero y revienta con $proc=$null -> "Failed (ffmpeg no arranco)".
+# VA CON $TmpTag Y NO CON $stamp: el comentario que habia aqui decia que "solo
+# corre un encode a la vez", y eso dejo de ser cierto el 04/09/2026 al pasar a
+# MaxSlots=2. Con el sello a secas las dos ranuras se pisaban este fichero y un
+# fallo se diagnosticaba con el stderr del OTRO trabajo. El barrido
+# encode_ff_stderr_* lo sigue casando igual.
+$FfErr       = Join-Path $Tmp "encode_ff_stderr_${TmpTag}.txt"
 
 # El panel mata el trabajo por este PID. Escribimos el PID de ESTE proceso
 # (encode.ps1) YA, no el de ffmpeg: durante la fase de audio (truehdd/dee, que en
@@ -711,8 +777,18 @@ $CfgPerfil  = if ($Res -eq '4K') { $CfgPerfil4K } else { $CfgPerfil1080p }
 # eleccion buena depende de la pelicula y solo la puede hacer quien la mira.
 # 'auto' deja exactamente el comportamiento de siempre.
 $RateModeForzado = ($RateMode -ne 'auto')
+# A mano, 'icq' es ICQ PURO, sin red: elegir ICQ en el panel es elegir "sin
+# objetivo de tamano" (ver bitrate-por-pelicula-panel), y la red es justamente
+# un objetivo de tamano. La red solo se aplica al perfil automatico 'icq-red'.
 if ($RateModeForzado) { $CfgPerfil = if ($RateMode -eq 'icq') { 'icq' } else { 'techo' } }
-$UseRateCap = ($CfgPerfil -ne 'icq')
+$UseRateCap = ($CfgPerfil -notlike 'icq*')
+$IcqRed     = ($CfgPerfil -eq 'icq-red')   # la red de mas abajo solo mira esto
+$IcqRedLimite = 0.0                        # Mbps que el video ICQ no puede superar; se fija en la cadena de bitrate
+$IcqRedEstado = ''                         # '' | 'ok' | 'repetido' -> completed.jsonl
+$IcqVideoMbps = 0.0                        # lo que gasto el video ICQ, se haya quedado o no
+$IcqAbortado  = $false                     # el vigilante mato la pasada ICQ antes de acabar
+$IcqAbortMbps = 0.0                        # media que llevaba al abortar
+$IcqAbortFrac = 0.0                        # fraccion del metraje al abortar
 
 $ColorTr = Probe "v:0" "stream=color_transfer" $InputFile
 $ColorRange = (Probe "v:0" "stream=color_range" $InputFile) -replace '[\s,]',''
@@ -1160,6 +1236,19 @@ if ($SubsOnly) {
     # todo a copy.
     foreach ($p in $AudioPlan) { $p.Action = 'copy'; $p.Keep = $true }
     Log "SubsOnly: video y audio intactos (copy, sin descartar pistas). Solo se procesan los subtitulos."
+
+    # La red de ICQ (linea ~785) no mira $SubsOnly: en este modo el video va en
+    # -c:v copy, asi que no hay pasada ICQ que medir ni "techo" al que repetir.
+    # $IcqRed seguia a $true (viene del perfil 'icq-red', el de 1080p y 4K por
+    # defecto) y al terminar la copia se llamaba a $MedirVideoIcq, que solo se
+    # define en la rama de encode NORMAL (dentro de $BuildVideoEncArgs, ver
+    # linea ~2747): PowerShell no encuentra el scriptblock e
+    # 'InvalidOperation' tumba el trabajo DESPUES de que ffmpeg ya termino la
+    # copia -sin reconstruir el contenedor, sin anotar completed.jsonl, sin
+    # devolver el estado a 'idle'-. Roto desde que la red se activo el
+    # 21/09/2026; no se habia visto porque nadie habia lanzado -SubsOnly desde
+    # entonces. Probado el 25/09/2026 con una prueba de respuesta conocida.
+    $IcqRed = $false
 }
 
 # -- PARALELISMO ENTRE PISTAS DE ESTA MISMA PELICULA -----------------------
@@ -1174,6 +1263,13 @@ if ($SubsOnly) {
 # siempre, sin tocar nada mas.
 $ParallelDdpTracks = 2
 
+# Con mas de un trabajo de video a la vez, UNA pista por trabajo (ver -Slots).
+# El watcher pasa el tamanyo del lote; a mano, sin -Slots, no cambia nada.
+if ($Slots -gt 1 -and $ParallelDdpTracks -gt 1) {
+    $ParallelDdpTracks = 1
+    Log ("  Audio: {0} trabajos de video a la vez -> 1 pista DDP por trabajo (2 cadenas DEE en total, no {1})." -f $Slots, ($Slots * 2))
+}
+
 $ddpPend = @($AudioPlan | Where-Object { $_.Keep -and $_.Action -eq 'ddp' -and
                                          ([bool]$AtmosFlags[$_.Idx] -or $DeewOk) })
 # Ranuras de conversion. Se construyen SIEMPRE, las use el camino en serie o el
@@ -1183,7 +1279,7 @@ $tracks = @($ddpPend | ForEach-Object {
        Bitrate = $(if ($_.DdpK -gt 0) { $_.DdpK } else { Get-DdpBitrate ([bool]$AtmosFlags[$_.Idx]) $_.Ch $DeewBitrateAtmos })
        IsAtmos = [bool]$AtmosFlags[$_.Idx]
        Ch = $_.Ch
-       OutFile = (Join-Path $BigTmp "ddp_${stamp}_$($_.Idx).ec3") }
+       OutFile = (Join-Path $BigTmp "ddp_${TmpTag}_$($_.Idx).ec3") }
 })
 
 # CUANTO TRABAJO DE AUDIO HAY POR DELANTE, en segundos. Hace falta para decidir
@@ -1277,7 +1373,14 @@ function Complete-DdpPhase {
         # El .ec3 tambien a $BigTmp: es ~1 GB por pista y no pinta nada compitiendo
         # por C: con el pagefile. Lo lee ffmpeg en el encode, y lo barren tanto el
         # finally de atmos-lib como el Clean-JobLeftovers del watcher (patron ddp_*).
-        $ec3 = Join-Path $BigTmp "ddp_${stamp}_$($p.Idx).ec3"
+        #
+        # $TmpTag Y NO $stamp, y tiene que casar EXACTAMENTE con el OutFile que
+        # se le pasa al worker mas arriba: con el sello a secas, dos trabajos
+        # arrancados en el mismo segundo -que es lo normal, porque el watcher
+        # lanza las dos ranuras en la misma vuelta- apuntaban al MISMO .ec3.
+        # Eso no da error: da una pelicula con el audio de la otra, y pasa
+        # todas las verificaciones. Ver el 08/09/2026 en CHANGELOG.md.
+        $ec3 = Join-Path $BigTmp "ddp_${TmpTag}_$($p.Idx).ec3"
         Remove-Item -LiteralPath $ec3 -ErrorAction SilentlyContinue
         # El codec real, no "TrueHD" hardcodeado: por aqui pasan ahora tambien las
         # pistas DTS, y un log que miente sobre lo que esta haciendo no ayuda a nadie.
@@ -1572,8 +1675,17 @@ if ($Type -eq "Movie") {
     # doble de lo que costo el escalon veryslow->medium que se acepto como
     # gratis. NO MEDIDO A OJO: el SSIM no ve banding, asi que si en el QN93A se
     # notara, aqui es donde se vuelve a subir.
-    if     ($Res -eq "4K" -and $Hdr -eq "HDR") { $Target = 9.5 }
-    elseif ($Res -eq "4K")                     { $Target = 9.0 }
+    # 4K: 9,5/9,0 -> 9,0/8,5 el 21/09/2026, a peticion del usuario. DATOS de
+    # las 42 peliculas 4K desde el 02/09: 35 van pegadas al target (>=90 %),
+    # asi que -0,5 M muerde de verdad: -4 % (~13 GB sobre 327). Bajo 'icq-red'
+    # esta cifra es ademas el LIMITE de la red, o sea que mas peliculas caeran a
+    # 'techo'. El suelo baja con el (8,5 -> 8,0) o anularia el SDR. Veredicto
+    # visual de referencia (19/08, tramo mas duro de El atlas): 10,5
+    # indistinguible, 8,5 "un poco, casi nada", 5,8 perdida clara. Con 9,0 se
+    # esta en el borde de lo que se dio por bueno; si en la tele se nota, es
+    # aqui donde se vuelve a subir.
+    if     ($Res -eq "4K" -and $Hdr -eq "HDR") { $Target = 9.0 }
+    elseif ($Res -eq "4K")                     { $Target = 8.5 }
     elseif ($Hdr -eq "HDR")                    { $Target = 5.5 }
     else                                       { $Target = 5.0 }
 } else {
@@ -1602,7 +1714,11 @@ if ($Type -eq "Movie") {
 # hasta el suelo reducido. Solo afecta a pelis muy largas; por debajo, nada cambia.
 $LongMin = 210
 $IsLong  = (($Type -eq "Movie") -and (($Duration / 60) -ge $LongMin))
-if ($Res -eq "4K") { $QFloor = if ($IsLong) { 6.5 } else { 8.5 } }
+# 4K: 8,5 -> 8,0 el 21/09/2026, con el target (9,0/8,5). Si se queda en 8,5
+# el SDR (8,5) nunca baja de ahi y el tope del 70 % o el techo no pueden
+# recortar por debajo: la misma trampa del 1080p del 27/08. El suelo largo
+# (6,5) no cambia.
+if ($Res -eq "4K") { $QFloor = if ($IsLong) { 6.5 } else { 8.0 } }
 # 1080p: 6.5/5.5 -> 4.5/4.0 el 27/08/2026. El suelo ACOMPANYA al target y hay
 # que bajarlo con el o el cambio no sirve de nada: con el suelo en 6,5 una
 # pelicula cuyo target nuevo sea 5,0 volveria a subir a 6,5 sola, que es
@@ -1627,6 +1743,10 @@ if ($Target -lt $QFloor) { $Target = $QFloor }
 $quien = 'tabla de targets'
 $CeilGb = if ($Res -eq "4K") { 16.0 } else { 12.0 }   # 1080p: 10 -> 12 el 07/08/2026, o el techo anularia el target nuevo en metrajes largos
 $maxVideo = ($CeilGb * 8 * 1GB / $Duration) / 1e6 - $AudioMbps
+# Limite de la red de 'icq-red': el techo de tamano es la primera regla dura.
+# Se afina mas abajo con "nunca mas que la fuente". El suelo y la tabla no
+# entran: no son limites, son lo que 'techo' habria pedido.
+$IcqRedLimite = [math]::Round($maxVideo, 2)
 if ($maxVideo -lt $Target) { $Target = [math]::Round($maxVideo,1); $quien = 'techo de tamano' }
 if ($Target -lt $QFloor)   { $Target = $QFloor; $quien = 'suelo de calidad' }   # el techo nunca baja del suelo
 Log ("Duration scaling ({0}min, {1}GB, audio {2}M, suelo {3}M): target={4}M" -f [int]($Duration/60),$CeilGb,$AudioMbps,$QFloor,$Target)
@@ -1693,6 +1813,10 @@ if ($BitrateSrc -gt 0) {
     # subir el target por encima de la fuente en material patologico (4K por
     # debajo de 5M equivalente). Es deliberado: ahi el problema es la fuente.
     if ($Target -gt $srcEq) { $Target = [math]::Round($srcEq,1); $quien = 'bitrate de la fuente' }
+    # Segunda regla dura para la red de 'icq-red'. Con el techo entra la
+    # duracion; con esto entra la fuente: un ICQ que gasta mas que el original
+    # (Intercambiados, +41 %) se repite en 'techo' aunque quepa en el disco.
+    if ($srcEq -lt $IcqRedLimite) { $IcqRedLimite = [math]::Round($srcEq, 2) }
     # LOG HONESTO (19/08/2026). Antes decia "after 70% cap: X" con la X ya pasada
     # por el tope, el suelo Y la guarda de la fuente, o sea que le atribuia al
     # tope un valor que podia haber fijado otra regla. No es cosmetico: esta es
@@ -1707,6 +1831,21 @@ if ($BitrateSrc -gt 0) {
 
 $absFloor = if ($Res -eq "4K") { 5.0 } else { 2.0 }
 if ($Target -lt $absFloor) { $Target = $absFloor }
+
+# TERCERA REGLA DE LA RED, Y LA QUE MANDA CASI SIEMPRE (21/09/2026, tarde):
+# el video ICQ solo se queda si gasta COMO MUCHO lo que 'techo' habria pedido.
+# Con las dos reglas de arriba solas, la red frenaba el disparo grande pero
+# dejaba crecer el grano hasta el techo de $CeilGb: "El Bueno El Feo Y El Malo"
+# (179 min) salio a 10,77 Mbps -15,0 GB- porque el techo para ese metraje es
+# 11,5 M, cuando 'techo' habia dado 8,64 M -11,9 GB- con la misma calidad
+# pedida. El usuario lo vio en el primer trabajo. Lo que se quiere es "ICQ
+# donde AHORRA, techo donde ICQ engordaria", y eso es comparar contra $Target.
+# Va aqui porque $Target ya es definitivo (tabla, suelo, techo, tope 70 %,
+# fuente y suelo absoluto): la red compara contra la misma cifra que 'techo'
+# habria pasado en -b:v. Ojo: 'techo' rellena ~0,90-0,95 del target, asi que un
+# ICQ que se quede justo bajo el target puede salir hasta un ~10 % mayor que
+# 'techo'; es el precio de no repetir por un pelo.
+if ($Target -lt $IcqRedLimite) { $IcqRedLimite = $Target }
 
 # -- ICQ SOLO CUANDO NO HAY NADA QUE RESPETAR (27/08/2026) ------------------
 # ICQ puro (-global_quality a solas) reparte los bits por complejidad de escena,
@@ -1739,13 +1878,26 @@ if ($Target -lt $absFloor) { $Target = $absFloor }
 # explicita de quien encola, y aqui el trabajo del pipeline es obedecerla y
 # decirlo, no corregirla por su cuenta. La guarda existe para el modo 'auto'.
 $IcqRestringido = @('techo de tamano','tope 70%','bitrate de la fuente')
+# Con 'icq-red' el techo de tamano YA lo vigila la red a posteriori, y ademas
+# las largas son donde ICQ mas gana (El reino de los cielos EE, 194 min: -32 %).
+# Asi que ahi se deja probar a ICQ y solo se repite si de verdad se pasa. Las
+# dos reglas derivadas de la fuente se quedan como guarda previa: son los casos
+# de fuente POBRE, donde ICQ gasta mas que el original (medido) y repetir seria
+# tirar una pasada casi segura.
+if ($IcqRed) { $IcqRestringido = @('tope 70%','bitrate de la fuente') }
 if ($RateModeForzado -and (-not $UseRateCap) -and ($quien -in $IcqRestringido)) {
     Log ("AVISO: ICQ pedido a mano y ademas el target lo fijaba '{0}' ({1}M)." -f $quien, $Target)
     Log  "  Se respeta ICQ porque lo has pedido tu, pero ese limite NO se va a cumplir:"
     Log  "  en ICQ el tamano queda libre. Si lo que quieres es respetarlo, usa qvbr."
 }
 if ((-not $RateModeForzado) -and (-not $UseRateCap) -and ($quien -in $IcqRestringido)) {
+    # $CfgPerfil TAMBIEN cambia (21/09/2026): antes solo se tocaba $UseRateCap y
+    # el perfil seguia diciendo 'icq', con dos consecuencias: la tabla de GQ de
+    # mas abajo elegia el GQ de ICQ (18 en 4K) para un encode que iba con -b:v,
+    # y completed.jsonl registraba rate_mode='icq' en un trabajo hecho en QVBR.
     $UseRateCap = $true
+    $CfgPerfil  = 'techo'
+    $IcqRed     = $false
     Log ("Perfil ICQ ANULADO para este trabajo: el target lo fija '{0}' ({1}M)." -f $quien, $Target)
     Log  "  ICQ no sabe respetar ese limite (no admite techo sin dejar de ser ICQ),"
     Log  "  asi que se usa 'techo' y la restriccion se cumple de verdad."
@@ -1765,6 +1917,8 @@ if ($TargetMbps -gt 0) {
     # arreglo hoy mismo, reintroducido por la puerta de atras-. Se dice.
     $forzadoTecho = -not $UseRateCap
     $UseRateCap = $true
+    $CfgPerfil  = 'techo'   # mismo motivo que en la guarda de arriba: GQ y rate_mode deben seguir al modo real
+    $IcqRed     = $false
     Log ("BITRATE A MANO: {0}M (-TargetMbps). El automatico habria sido {1}M." -f $Target, $auto)
     Log  "  Manda esta cifra por encima de TODO: duration scaling, tope del 70%,"
     Log ("  techo de {0} GB, suelo de calidad ({1}M) y suelo absoluto ({2}M)." -f $CeilGb, $QFloor, $absFloor)
@@ -1813,6 +1967,11 @@ if (-not $UseRateCap) {
     Log ("  techo de {0} GB. Manda SOLO el GQ y el tamano final es libre." -f $CeilGb)
     Log "  Esas cifras quedan como REFERENCIA de lo que habria hecho el perfil 'techo'."
 }
+if ($IcqRed) {
+    Log ("  RED ICQ: el video se queda si no pasa de {0}M (limite {1}M x{2} de holgura)." -f `
+        [math]::Round($IcqRedLimite * $IcqRedHolgura, 2), $IcqRedLimite, $IcqRedHolgura)
+    Log ("  Si se pasa, se repite SOLO el video en 'techo' con el target de arriba ({0}M)." -f $Target)
+}
 }   # fin del bloque de bitrate (no se ejecuta en SubsOnly)
 
 # -- Quality -------------------------------------------------------
@@ -1840,14 +1999,19 @@ if (-not $UseRateCap) {
 # 22/08/2026: en modo 'icq' el GQ es la UNICA palanca de calidad y sale de
 # $CfgGqIcq4K / $CfgGqIcq1080p. La tabla de abajo es la del modo 'techo' y se
 # conserva intacta para que $CfgPerfil='techo' revierta sin tocar nada mas.
-if ($CfgPerfil -eq 'icq') {
-    $BaseGq = if ($Res -eq "4K") { $CfgGqIcq4K } else { $CfgGqIcq1080p }
+# Va en un scriptblock porque la red de 'icq-red' tiene que volver a calcularlo
+# al pasar a 'techo' a mitad de trabajo (GQ 18 -> 15 en 4K).
+$BuildGq = {
+    if ($CfgPerfil -like 'icq*') {
+        $BaseGq = if ($Res -eq "4K") { $CfgGqIcq4K } else { $CfgGqIcq1080p }
+    }
+    elseif ($Res -eq "4K" -and $Hdr -eq "HDR") { $BaseGq = 15 }
+    elseif ($Res -eq "4K")                     { $BaseGq = 16 }
+    elseif ($Hdr -eq "HDR")                    { $BaseGq = 15 }
+    else                                       { $BaseGq = 15 }
+    $Gq = if ($Mode -eq "quality") { $BaseGq - 1 } else { $BaseGq }
 }
-elseif ($Res -eq "4K" -and $Hdr -eq "HDR") { $BaseGq = 15 }
-elseif ($Res -eq "4K")                     { $BaseGq = 16 }
-elseif ($Hdr -eq "HDR")                    { $BaseGq = 15 }
-else                                       { $BaseGq = 15 }
-$Gq = if ($Mode -eq "quality") { $BaseGq - 1 } else { $BaseGq }
+. $BuildGq
 $Gop = if ($Type -eq "Series") { 120 } else { 240 }
 
 # -- VPP filter chain (QSV) ----------------------------------------
@@ -1949,6 +2113,7 @@ if ($SubsOnly) {
     Log "$Type | $Res | $Hdr | SOLO SUBTITULOS: video y audio en copy (sin reencodear)"
 } else {
     $RcDesc = if ($UseRateCap) { "QVBR GQ=$Gq maxrate=${MaxRate}M" } else { "ICQ GQ=$Gq (sin techo de bitrate)" }
+    if ($IcqRed) { $RcDesc += " [con red: repite en techo si pasa de $([math]::Round($IcqRedLimite * $IcqRedHolgura, 2))M]" }
     if ($RateModeForzado) { $RcDesc += " [modo pedido a mano: $RateMode]" }
     Log "$Type | $Res | $Hdr | $RcDesc | GOP=$Gop | preset=$Preset"
 }
@@ -2060,6 +2225,10 @@ $DoSubsPhase = {
     $SrtInputs = @()
     $subOut = 0
     $SubsDropped = 0     # <-- contador de pistas descartadas
+    # Que subtitulos NATIVOS se corrigieron y por que, para completed.jsonl (y
+    # de ahi al panel). Antes solo quedaba en el .log de ese trabajo, que nadie
+    # mira a menos que lo abra a mano.
+    $SubsResync = @()
     # Cuantas pistas de TEXTO nativas se conservan. Decide si al final hace falta
     # salir a buscar subtitulos fuera (ver el bloque de subsfetch, mas abajo).
     $TextoNativo = 0
@@ -2131,7 +2300,11 @@ $DoSubsPhase = {
             # el pagefile y la cola. El resto de temporales pesados ya vivia alli desde
             # el 31/07. Los dos watchers barren $Tmp y $BigTmp con el patron 'ocr_*',
             # asi que la limpieza sigue cubierta.
-            $tmpSrt = Join-Path $BigTmp "ocr_${stamp}_${i}.srt"
+            # $TmpTag y no $stamp: con el sello a secas, las dos ranuras
+            # escribian el mismo ocr_*.srt. El que muxeaba primero borraba los
+            # temporales y el segundo moria con 'Error opening input file'.
+            # Fulmino tres episodios de Juego de Tronos el 08/09/2026.
+            $tmpSrt = Join-Path $BigTmp "ocr_${TmpTag}_${i}.srt"
 
             $ocr = Convert-SubToSrt -InputFile $InputFile -SubOrdinal $i -OutFile $tmpSrt `
                                     -Codec $scodec -Lang $lang -WorkDir $BigTmp -TimeoutMs $OcrTimeoutMs
@@ -2170,28 +2343,109 @@ $DoSubsPhase = {
                 $subOut++
             }
         } else {
-            # Mapear pistas de texto nativas directamente (SRT / ASS)
-            $SubMap += @('-map', "0:s:$i")
-            if ($scodec -in @('mov_text','tx3g','ass','ssa')) {
-                $SubCodec += @("-c:s:$subOut","srt")
+            # Pistas de texto nativas (SRT / ASS / VobSub-copy). Antes se mapeaban
+            # DIRECTO del contenedor sin comprobar nunca su sincronia. Para las de
+            # verdad textuales (no VobSub, que es imagen), se extraen a un temporal
+            # y se verifican contra el audio principal; solo si subsfetch demuestra
+            # que hace falta corregir, se reenrutan por el mismo camino que ya usan
+            # los SRT del OCR ($SrtInputs) en vez de copiarse tal cual.
+            $esTextual = $scodec -in @('mov_text','tx3g','ass','ssa','subrip','text','webvtt')
+            $reenrutada = $false
+
+            if ($esTextual -and $VerifySubSync -and $AudioPlan.Count -gt 0) {
+                $tmpNativoSrt = Join-Path $BigTmp "native_${TmpTag}_${i}.srt"
+                $exArgs = @('-hide_banner','-v','error','-y','-i',$InputFile,'-map',"0:s:$i",$tmpNativoSrt)
+                $null = & $FFMPEG @exArgs 2>$null
+                if ((Test-Path -LiteralPath $tmpNativoSrt) -and ((Get-Item -LiteralPath $tmpNativoSrt).Length -gt 0)) {
+                    # La pista de audio que corresponde al IDIOMA del subtitulo,
+                    # no siempre la primera del plan. Mismo fallo que se
+                    # encontro y arreglo el 25/09/2026 en
+                    # verificar_subtitulos_externos.py (audio_principal): en
+                    # esta biblioteca el espanol suele ir primero, asi que un
+                    # subtitulo nativo en ingles se estaba verificando contra
+                    # audio en espanol. Si no hay ninguna pista con ese idioma,
+                    # se cae a la primera del plan, igual que antes.
+                    $planAudio = $AudioPlan | Where-Object { $_.Lang -eq $lang } | Select-Object -First 1
+                    if (-not $planAudio) { $planAudio = $AudioPlan[0] }
+                    # $acIdx es una lista de indices ABSOLUTOS de ffprobe en el
+                    # orden de "a:N"; $planAudio.Idx es esa N, no el indice
+                    # absoluto.
+                    $acIdxAbs = [int]((($acIdx -split "`n"))[$planAudio.Idx])
+                    $corregidoSrt = Join-Path $BigTmp "native_fix_${TmpTag}_${i}.srt"
+                    $vOut = & $PYTHON $SubsFetch $InputFile '--verificar-srt' $tmpNativoSrt `
+                                       '--audio-index' $acIdxAbs '--reescribir-en' $corregidoSrt 2>$null
+                    $v = $null
+                    try { $v = ($vOut | Select-Object -Last 1) | ConvertFrom-Json } catch { $v = $null }
+                    if ($v -and $v.escrito -and (Test-Path -LiteralPath $corregidoSrt) `
+                             -and ((Get-Item -LiteralPath $corregidoSrt).Length -gt 0)) {
+                        Log "  Sub ${i}: DESINCRONIZADA ($lang) - $($v.informe). Corregida antes del mux."
+                        $SubsResync += @{ idx = $i; lang = $lang; informe = $v.informe }
+                        # Conservar titulo y marca de FORZADA del original: sin la
+                        # marca, un forzado reenrutado saldria como subtitulo
+                        # completo y Plex mostraria todo el dialogo en vez de solo
+                        # los rotulos. (El orden si cambia: los de $SrtInputs van
+                        # despues de los mapeados directos.)
+                        $sTitOrig   = Repair-Mojibake (Probe "s:$i" "stream_tags=title" $InputFile)
+                        $esForzada  = [bool]((Probe "s:$i" "stream_disposition=forced" $InputFile) -match '^1')
+                        # Y la de POR DEFECTO: probado el 25/09/2026, sin esto la
+                        # pista corregida salia con default=0 aunque el original
+                        # lo tuviera, y un forzado por defecto dejaba de salir solo.
+                        $esDefecto  = [bool]((Probe "s:$i" "stream_disposition=default" $InputFile) -match '^1')
+                        $tituloFix  = if ($sTitOrig) { $sTitOrig } else { $lang }
+                        $SrtInputs += @{ Path = $corregidoSrt; Lang = $lang; Title = $tituloFix; Forzado = $esForzada; Defecto = $esDefecto }
+                        $reenrutada = $true
+                    } else {
+                        # Cada salida deja su huella en el log, tambien la buena:
+                        # sin eso, "verificada y bien" y "no llego a verificarse"
+                        # son indistinguibles, y una prueba del cambio daba verde
+                        # sin demostrar nada (visto el 25/09/2026).
+                        if ($null -eq $v) {
+                            Log "  Sub ${i}: verificacion de sync SIN RESPUESTA ($lang). Se copia tal cual."
+                        } elseif ($v.ok) {
+                            Log "  Sub ${i}: sync verificada ($lang) - $($v.informe)"
+                        } elseif ($v.inmedible) {
+                            Log "  Sub ${i}: sync no medible ($lang) - $($v.informe). Se copia tal cual."
+                        } else {
+                            Log "  Sub ${i}: sync no demostrada ($lang) - $($v.informe). Se copia tal cual."
+                        }
+                        Remove-Item -LiteralPath $corregidoSrt -ErrorAction SilentlyContinue
+                    }
+                } else {
+                    Log "  Sub ${i}: no se pudo extraer para verificar sync ($lang). Se copia tal cual."
+                }
+                Remove-Item -LiteralPath $tmpNativoSrt -ErrorAction SilentlyContinue
+            }
+
+            if ($reenrutada) {
+                # Igual que un SRT nativo normal a efectos de contar: solo cambia
+                # COMO entra al mux (via $SrtInputs, no mapeo directo). $subOut lo
+                # incrementa el bucle de $SrtInputs mas abajo, no aqui.
                 $TextoNativo++
-                Log "  Sub ${i}: kept ($lang) [$scodec -> srt]"
+                Log "  Sub ${i}: kept ($lang) [$scodec -> srt, resincronizado]"
             } else {
-                $SubCodec += @("-c:s:$subOut","copy")
-                # 'subrip' es texto y cuenta; 'dvd_subtitle' (VobSub) NO: es imagen y
-                # no hay OCR para el, asi que deja la pelicula sin subtitulo utilizable
-                # y es justo uno de los dos casos que disparan la busqueda externa.
-                if ($scodec -in @('subrip','text','webvtt')) { $TextoNativo++ }
-                Log "  Sub ${i}: kept ($lang) [$scodec -> copy]"
+                # Mapear pistas de texto nativas directamente (SRT / ASS)
+                $SubMap += @('-map', "0:s:$i")
+                if ($scodec -in @('mov_text','tx3g','ass','ssa')) {
+                    $SubCodec += @("-c:s:$subOut","srt")
+                    $TextoNativo++
+                    Log "  Sub ${i}: kept ($lang) [$scodec -> srt]"
+                } else {
+                    $SubCodec += @("-c:s:$subOut","copy")
+                    # 'subrip' es texto y cuenta; 'dvd_subtitle' (VobSub) NO: es imagen y
+                    # no hay OCR para el, asi que deja la pelicula sin subtitulo utilizable
+                    # y es justo uno de los dos casos que disparan la busqueda externa.
+                    if ($scodec -in @('subrip','text','webvtt')) { $TextoNativo++ }
+                    Log "  Sub ${i}: kept ($lang) [$scodec -> copy]"
+                }
+                # Limpiar titulo mal codificado de la pista de subtitulos si lo tuviera
+                $sTit = Probe "s:$i" "stream_tags=title" $InputFile
+                $sTitClean = Repair-Mojibake $sTit
+                if ($sTit -and ($sTitClean -ne $sTit)) {
+                    $SrtMetaArgs += @("-metadata:s:s:$subOut", "title=$sTitClean")
+                    Log "  Sub ${i}: titulo corregido: '$sTit' -> '$sTitClean'"
+                }
+                $subOut++
             }
-            # Limpiar titulo mal codificado de la pista de subtitulos si lo tuviera
-            $sTit = Probe "s:$i" "stream_tags=title" $InputFile
-            $sTitClean = Repair-Mojibake $sTit
-            if ($sTit -and ($sTitClean -ne $sTit)) {
-                $SrtMetaArgs += @("-metadata:s:s:$subOut", "title=$sTitClean")
-                Log "  Sub ${i}: titulo corregido: '$sTit' -> '$sTitClean'"
-            }
-            $subOut++
         }
     }
 
@@ -2305,7 +2559,13 @@ $DoSubsPhase = {
         # completa y el usuario acaba con todo el dialogo subtitulado cuando solo
         # queria los rotulos. Solo la ponen los SRT de subsfetch; los del OCR no
         # traen la clave y el operador -eq sobre $null da $false, que es lo correcto.
-        if ($srt.Forzado) { $SrtMetaArgs += @("-disposition:s:$subOut", "forced") }
+        # POR DEFECTO solo la traen las nativas reenrutadas por la verificacion de
+        # sincronia (conservan la del original). Las dos marcas van en UN solo
+        # -disposition: dos para la misma pista se pisan y gana la ultima.
+        $disp = @()
+        if ($srt.Forzado) { $disp += 'forced' }
+        if ($srt.Defecto) { $disp += 'default' }
+        if ($disp.Count -gt 0) { $SrtMetaArgs += @("-disposition:s:$subOut", ($disp -join '+')) }
         $subOut++
         $inputIdx++
     }
@@ -2349,6 +2609,9 @@ if ($SubsOnly) {
 # copiarlos seria la forma mas segura de que un dia dejen de coincidir. Estan
 # medidos uno a uno (ver la skill arc-qsv-facts y el comentario largo de aqui
 # debajo): no se tocan.
+# En scriptblock desde el 21/09/2026: la red de 'icq-red' los vuelve a montar
+# con -b:v/-maxrate/-bufsize y el GQ de 'techo' cuando el video ICQ se pasa.
+$BuildVideoEncArgs = {
 $VideoEncArgs = @(
     '-vf', $Vf,
     '-c:v','hevc_qsv',
@@ -2481,6 +2744,41 @@ $VideoEncArgs = @(
     '-profile:v','main10',
     '-g', "$Gop"
 )
+}
+. $BuildVideoEncArgs
+
+# RED DE 'icq-red': pasar ESTE trabajo a 'techo' despues de ver lo que gasto el
+# video en ICQ. Cambia el perfil, recalcula el GQ (18 -> 15 en 4K) y vuelve a
+# montar los argumentos del encoder con -b:v/-maxrate/-bufsize, que ya estaban
+# calculados por la cadena de bitrate como referencia de lo que 'techo' habria
+# hecho. $BuildClassicFf lee $VideoEncArgs al invocarse, asi que basta con
+# rehacer estos y volver a llamarlo.
+$PasarATecho = {
+    param([double]$gastado, [double]$fraccion = 1.0)
+    $IcqVideoMbps = $gastado
+    $IcqRedEstado = if ($fraccion -lt 1.0) { 'abortado' } else { 'repetido' }
+    $UseRateCap   = $true
+    $CfgPerfil    = 'techo'
+    $IcqRed       = $false
+    . $BuildGq
+    . $BuildVideoEncArgs
+    if ($fraccion -lt 1.0) {
+        Log ("RED ICQ: pasada ICQ abortada al {0:P0} con media {1}M; el limite era {2}M." -f $fraccion, $gastado, $IcqRedLimite)
+    } else {
+        Log ("RED ICQ: el video ICQ gasto {0}M y el limite era {1}M (x{2} sobre {3}M)." -f `
+            $gastado, [math]::Round($IcqRedLimite * $IcqRedHolgura, 2), $IcqRedHolgura, $IcqRedLimite)
+    }
+    Log ("  Se repite SOLO el video en 'techo': QVBR GQ=$Gq -b:v ${Target}M maxrate=${MaxRate}M." )
+    Log  "  El audio ya convertido se conserva; esto cuesta una pasada de video, no un trabajo."
+}
+$MedirVideoIcq = {
+    param([string]$fichero, [double]$audioM)
+    # Mbps de VIDEO de un fichero: en el temporal de la pasada 1 no hay audio y
+    # $audioM va a 0; en la salida del camino clasico se resta el audio estimado,
+    # que es la misma cuenta que hace el registro de completed.jsonl.
+    $bytes = (Get-Item -LiteralPath $fichero).Length
+    [math]::Round((($bytes * 8.0 / $Duration) / 1e6) - $audioM, 2)
+}
 
 # El encode de SIEMPRE: video, audio y subtitulos en UNA llamada. Va en un
 # scriptblock invocado con '.' (corre en este ambito) porque ahora hace falta en
@@ -2588,9 +2886,62 @@ $StartFfmpegPass = {
 # La ESPERA, aparte del arranque: asi, en el camino solapado, entre lanzar el
 # video y esperarlo se puede hacer otra cosa util (el OCR de los subtitulos).
 $WaitFfmpegPass = {
-    param($estadoAudio = $null)
+    param($estadoAudio = $null, [bool]$vigilarIcq = $false, [double]$audioEnSalidaM = 0.0)
 
-    if ($estadoAudio) {
+    # ABORTO TEMPRANO DE LA RED ICQ (21/09/2026, noche). Cuando el video ICQ va
+    # claramente por encima del target no hace falta esperar al final para
+    # saber que se va a repetir: se mata la pasada y se pasa a 'techo' ya. Lo
+    # que se ahorra es el resto de la pasada (Gremlins 2 iba al 70 % con 11,26
+    # Mbps sobre 9,5: 10 min tirados de 30).
+    # LOS MARGENES SALEN DE LO MEDIDO EL 26/08/2026 (memoria
+    # 'proyeccion-25pct-no-vale-en-icq'): en ICQ la media parcial se equivoca
+    # hasta un 27,6 % al 25 % del metraje y hasta un 8,8 % al 50 %, EN LOS DOS
+    # SENTIDOS. Por eso no se aborta por "va un poco por encima": solo cuando
+    # la media parcial supera el limite por mas de lo que la proyeccion puede
+    # estar equivocada. Un aborto en falso cuesta el ahorro de ICQ de esa
+    # pelicula (sale como con 'techo'); no abortar cuesta solo tiempo.
+    #   < 25 %      : nunca (la proyeccion no vale nada todavia)
+    #   25 % - 50 % : media > limite x 1,30
+    #   50 % - 75 % : media > limite x 1,12
+    #   >= 75 %     : nunca (queda poco que ahorrar y el riesgo no compensa)
+    # n=3 detras de esos margenes: si en el jsonl aparece un 'repetido' cuyo
+    # icq_video_mbps final quedo por DEBAJO del limite, un aborto fue en falso
+    # y hay que subir el margen.
+    $IcqAbortado  = $false
+    $IcqAbortMbps = 0.0
+    $IcqAbortFrac = 0.0
+    $ultimaVig = Get-Date
+    # DATOS PARA AFINAR LOS MARGENES (21/09/2026, noche). Los de arriba salen
+    # de n=3; cada pasada ICQ deja aqui su media al 25/50/75 % y el CV del
+    # bitrate por tramos de 10 s, y en el jsonl queda la media final. Con eso,
+    # en 10-15 peliculas se puede medir el error real de la proyeccion en ESTA
+    # biblioteca y bajar los margenes (o abortar antes) con datos, no a ojo.
+    # La dispersion se apunta porque el 26/08 fue lo que predijo el error.
+    $vigMuestras = [System.Collections.Generic.List[double]]::new()
+    $vigPrevT = 0.0; $vigPrevSz = 0.0
+    $vigHitos = @(0.25, 0.50, 0.75)
+    $vigHitoIdx = 0
+    $mirarIcq = {
+        param([double]$audioM)
+        $tail = Get-Content -LiteralPath $ProgFile -Tail 14 -ErrorAction SilentlyContinue
+        if (-not $tail) { return $null }
+        $t = 0.0; $sz = 0.0; $fr = 0.0
+        foreach ($l in $tail) {
+            if     ($l -match '^out_time_us=(\d+)') { $t  = [double]$Matches[1] / 1e6 }
+            elseif ($l -match '^total_size=(\d+)')  { $sz = [double]$Matches[1] }
+            elseif ($l -match '^frame=(\d+)')       { $fr = [double]$Matches[1] }
+        }
+        # hevc_qsv a veces deja out_time congelado o en N/A (ver app.py); el
+        # contador de fotogramas si avanza siempre. Se usa el mayor de los dos.
+        if ($fr -gt 0 -and $FpsSrc -match '^(\d+)/(\d+)$' -and [double]$Matches[2] -gt 0) {
+            $tf = $fr / ([double]$Matches[1] / [double]$Matches[2])
+            if ($tf -gt $t) { $t = $tf }
+        }
+        if ($t -le 0 -or $sz -le 0 -or $Duration -le 0) { return $null }
+        @{ Frac = $t / $Duration; Mbps = [math]::Round(($sz * 8 / $t) / 1e6 - $audioM, 2); T = $t; Sz = $sz }
+    }
+
+    if ($estadoAudio -or $vigilarIcq) {
         # Con el audio solapado NO se puede bloquear en WaitForExit: si hay mas
         # pistas que ranuras, la siguiente solo arranca desde Step-.
         #
@@ -2610,7 +2961,43 @@ $WaitFfmpegPass = {
         }
         while (-not $VideoProc.HasExited) {
             Start-Sleep -Milliseconds 1000
-            $null = Step-DdpTracksParallel -State $estadoAudio -OnProgress $cbAudio
+            if ($estadoAudio) { $null = Step-DdpTracksParallel -State $estadoAudio -OnProgress $cbAudio }
+            if ($vigilarIcq -and ((Get-Date) - $ultimaVig).TotalSeconds -ge 10) {
+                $ultimaVig = Get-Date
+                $v = & $mirarIcq $audioEnSalidaM
+                if ($v) {
+                    # Muestra del tramo (bitrate de lo codificado desde la ultima
+                    # mirada) para el CV, y la linea de hito al cruzar 25/50/75 %.
+                    if ($vigPrevT -gt 0 -and $v.T -gt $vigPrevT) {
+                        $vigMuestras.Add((($v.Sz - $vigPrevSz) * 8 / ($v.T - $vigPrevT)) / 1e6 - $audioEnSalidaM)
+                    }
+                    $vigPrevT = $v.T; $vigPrevSz = $v.Sz
+                    if ($vigHitoIdx -lt $vigHitos.Count -and $v.Frac -ge $vigHitos[$vigHitoIdx]) {
+                        $cv = 0.0
+                        if ($vigMuestras.Count -ge 3) {
+                            $m = ($vigMuestras | Measure-Object -Average).Average
+                            $sd = [math]::Sqrt((($vigMuestras | ForEach-Object { ($_ - $m) * ($_ - $m) } | Measure-Object -Sum).Sum) / $vigMuestras.Count)
+                            if ($m -gt 0) { $cv = $sd / $m }
+                        }
+                        Log ("RED ICQ: hito {0:P0}: media {1}M (limite {2}M, x{3:N2}), CV del bitrate por tramos {4:P0}, {5} tramos." -f `
+                            $vigHitos[$vigHitoIdx], $v.Mbps, $IcqRedLimite, ($v.Mbps / $IcqRedLimite), $cv, $vigMuestras.Count)
+                        $vigHitoIdx++
+                    }
+                    $margen = 0.0
+                    if     ($v.Frac -ge 0.25 -and $v.Frac -lt 0.50) { $margen = 1.30 }
+                    elseif ($v.Frac -ge 0.50 -and $v.Frac -lt 0.75) { $margen = 1.12 }
+                    if ($margen -gt 0 -and $v.Mbps -gt ($IcqRedLimite * $margen)) {
+                        $IcqAbortado  = $true
+                        $IcqAbortMbps = $v.Mbps
+                        $IcqAbortFrac = $v.Frac
+                        $vigilarIcq   = $false
+                        Log ("RED ICQ: ABORTO TEMPRANO al {0:P0} del metraje: media {1}M contra limite {2}M (margen x{3} a esta altura)." -f `
+                            $v.Frac, $v.Mbps, $IcqRedLimite, $margen)
+                        Log  "  No hace falta terminar la pasada para saber que se repetiria: se mata y se pasa a 'techo' ya."
+                        Stop-Process -Id $VideoProc.Id -Force -ErrorAction SilentlyContinue
+                    }
+                }
+            }
         }
     }
     $VideoProc.WaitForExit()
@@ -2624,13 +3011,43 @@ $WaitFfmpegPass = {
 # Arrancar y esperar de una vez: es lo que quieren todas las llamadas menos la
 # pasada de video del camino solapado.
 $RunFfmpegPass = {
-    param([string]$linea, [string]$etiqueta, $audioState = $null)
+    param([string]$linea, [string]$etiqueta, $audioState = $null, [bool]$vigilarIcq = $false, [double]$audioEnSalidaM = 0.0)
     . $StartFfmpegPass $linea $etiqueta
-    . $WaitFfmpegPass $audioState
+    . $WaitFfmpegPass $audioState $vigilarIcq $audioEnSalidaM
 }
 
 if (-not $ParaleloAV) {
-    . $RunFfmpegPass $argline 'encode'
+    # Se vigila SOLO esta pasada (es la de ICQ); la repeticion en 'techo' de
+    # abajo ya no lleva $IcqRed y ademas no hay nada que abortar en ella.
+    . $RunFfmpegPass $argline 'encode' $null $IcqRed $AudioMbps
+    # ---------- RED ICQ en el camino clasico ---------------------------------
+    # Aqui el video sale ya muxeado con audio y subtitulos, asi que se mide la
+    # salida entera menos el audio estimado. Si se pasa, se tira la salida y se
+    # repite la MISMA llamada en 'techo'. Cuesta el trabajo entero de ffmpeg,
+    # pero este camino solo lo usan las peliculas sin pistas para DEE, o sea que
+    # el audio es copia o eac3 de ffmpeg: lo que pesa es el video igualmente.
+    # Si el vigilante ya la ha abortado, no hay nada que medir: se repite.
+    if ($IcqRed -and ($IcqAbortado -or ($ExitCode -eq 0 -and (Test-Path -LiteralPath $Output)))) {
+        $gasto = if ($IcqAbortado) { $IcqAbortMbps } else { & $MedirVideoIcq $Output $AudioMbps }
+        if ($IcqAbortado -or $gasto -gt ($IcqRedLimite * $IcqRedHolgura)) {
+            # La fraccion solo tiene sentido si fue el vigilante; si la pasada
+            # acabo entera y se paso, es 'repetido' (1.0). Pasar $IcqAbortFrac
+            # a secas etiqueto "abortada al 0 %" a Sangre por sangre (21/09).
+            . $PasarATecho $gasto $(if ($IcqAbortado) { $IcqAbortFrac } else { 1.0 })
+            Remove-Item -LiteralPath $Output -Force -ErrorAction SilentlyContinue
+            . $BuildClassicFf
+            $argline = ($ff | ForEach-Object {
+                if ($_ -match '[\s"()]') { '"' + ($_ -replace '"','\"') + '"' } else { "$_" }
+            }) -join ' '
+            WriteNoBom $StatusFile $statusEnc
+            . $RunFfmpegPass $argline 'red ICQ: se repite en techo'
+        } else {
+            $IcqVideoMbps = $gasto
+            $IcqRedEstado = 'ok'
+            Log ("RED ICQ: el video ICQ gasto {0}M, dentro del limite ({1}M). Se queda." -f `
+                $gasto, [math]::Round($IcqRedLimite * $IcqRedHolgura, 2))
+        }
+    }
 } else {
     # ---------- PASADA 1: el video, con el audio corriendo por detras --------
     # Se LANZA sin esperar, y mientras encodea se hace el OCR de los
@@ -2638,7 +3055,7 @@ if (-not $ParaleloAV) {
     # eso, las tres cosas que tardan -audio, OCR y video- van a la vez.
     . $StartFfmpegPass $argline 'pasada 1: solo video'
     . $DoSubsPhase
-    . $WaitFfmpegPass $AudioBg
+    . $WaitFfmpegPass $AudioBg $IcqRed 0.0
     # RED DE SEGURIDAD. El 17/08/2026 esta pasada murio al 88 % con
     # '[hevc_qsv] Invalid FrameType:0' -> 'Error submitting video frame to the
     # encoder'. LA CAUSA NO SE ENCONTRO, y no se reproduce a voluntad:
@@ -2654,7 +3071,15 @@ if (-not $ParaleloAV) {
     # minutos mas que si el trabajo hubiera ido en serie desde el principio- y a
     # cambio no se pierde ni el trabajo ni el Atmos que DEE ya ha convertido.
     $VideoPass1Fallo = ($ExitCode -ne 0 -or -not (Test-Path -LiteralPath $VidTmp))
-    if ($VideoPass1Fallo) {
+    $IcqRepetir = $false
+    if ($IcqAbortado) {
+        # La mato yo, no fallo: se pasa a 'techo' ya y se rehace por el camino
+        # clasico igual que la red normal, sin pasar por el aviso de fallo.
+        $VideoPass1Fallo = $false
+        $IcqRepetir = $true
+        . $PasarATecho $IcqAbortMbps $IcqAbortFrac
+        Remove-Item -LiteralPath $VidTmp -Force -ErrorAction SilentlyContinue
+    } elseif ($VideoPass1Fallo) {
         Log "AVISO: la pasada de VIDEO fallo (exit $ExitCode). NO se aborta el trabajo:"
         Log "  se espera al audio y se rehace el video por el camino CLASICO (mismo"
         Log "  encode de siempre, mismo fichero resultante)."
@@ -2693,12 +3118,32 @@ if (-not $ParaleloAV) {
     # cual cayo a eac3, y de eso depende como se mapea cada una.
     . $BuildAudioMaps
 
-    if ($VideoPass1Fallo) {
+    # ---------- RED ICQ: el video ICQ contra el limite ------------------------
+    # Se mide AQUI y no nada mas terminar la pasada 1 porque el camino de
+    # repeticion es el clasico, que necesita el audio ya hecho. El temporal es
+    # solo video, asi que su tamano es la medida directa (audio 0). Si el
+    # vigilante ya aborto la pasada, $IcqRed es falso y esto se salta.
+    if ($IcqRed -and -not $VideoPass1Fallo) {
+        $gasto = & $MedirVideoIcq $VidTmp 0.0
+        if ($gasto -gt ($IcqRedLimite * $IcqRedHolgura)) {
+            . $PasarATecho $gasto
+            Remove-Item -LiteralPath $VidTmp -Force -ErrorAction SilentlyContinue
+            $IcqRepetir = $true
+        } else {
+            $IcqVideoMbps = $gasto
+            $IcqRedEstado = 'ok'
+            Log ("RED ICQ: el video ICQ gasto {0}M, dentro del limite ({1}M). Se queda." -f `
+                $gasto, [math]::Round($IcqRedLimite * $IcqRedHolgura, 2))
+        }
+    }
+
+    if ($VideoPass1Fallo -or $IcqRepetir) {
         # ---------- RED: el encode CLASICO, ya con el audio listo ------------
         # Mismos $VideoEncArgs, mismo mapeo, misma salida: lo unico que se ha
         # perdido es el tiempo del video que murio. El audio NO se rehace (los
         # .ec3 ya estan), asi que esto cuesta un encode de video, no un trabajo
-        # entero.
+        # entero. Desde el 21/09/2026 tambien entra por aqui la red de ICQ: el
+        # video no murio, pero gasto mas de lo permitido y se repite en 'techo'.
         Log "Rehaciendo el video por el camino clasico (encode + mux en una sola llamada)..."
         if (-not (Test-DdpSpace -Path $EncodedDir -NeededBytes $OutNeed -Label 'video')) {
             Exit-Requeue "sin espacio en $EncodedDir para el encode de respaldo"
@@ -2709,7 +3154,8 @@ if (-not $ParaleloAV) {
         }) -join ' '
         Remove-Item -LiteralPath $ProgFile -ErrorAction SilentlyContinue
         WriteNoBom $StatusFile "status=encoding`nfile=$(Split-Path $Output -Leaf)`nduration=$Duration`nfps_src=$FpsSrc`nstage=video`npct=0"
-        . $RunFfmpegPass $argline 'respaldo: encode clasico tras fallar la pasada de video'
+        $etiq = if ($IcqRepetir) { 'red ICQ: se repite el video en techo (encode clasico)' } else { 'respaldo: encode clasico tras fallar la pasada de video' }
+        . $RunFfmpegPass $argline $etiq
     } else {
     # ---------- PASADA 2: mux en copy ---------------------------------------
     # El input 0 SIGUE SIENDO LA FUENTE: de ahi salen los capitulos, el
@@ -2867,12 +3313,17 @@ if ($ExitCode -eq 0 -and (Test-Path -LiteralPath $Output)) {
     # El if va fuera del hashtable a proposito: dentro es fragil segun version.
     $recMode = "encode"
     if ($SubsOnly) { $recMode = "subs_only" }
+    # rate_mode sigue siendo 'icq' | 'techo' -el regimen REAL de la salida- para
+    # que los analisis viejos del jsonl no se rompan; que la red intervino o no
+    # lo dicen los dos campos icq_* de abajo.
+    $recRateMode = if ($CfgPerfil -like 'icq*') { 'icq' } else { 'techo' }
     $rec = @{
         output       = (Split-Path $Output -Leaf)
         source       = $InputFile
         size         = $sz
         size_bytes   = $outBytes
         subs_dropped = $SubsDropped
+        subs_resync  = @($SubsResync)   # @() por si es una sola: sin esto ConvertTo-Json aplana el array a un objeto suelto
         mode         = $recMode
         type         = $Type
         res          = $Res
@@ -2893,7 +3344,17 @@ if ($ExitCode -eq 0 -and (Test-Path -LiteralPath $Output)) {
         # analisis futuro de completed.jsonl mezcla los dos regimenes -que no son
         # comparables, porque en 'icq' el target no gobierna nada- sin que nada
         # avise. 'techo' | 'icq'.
-        rate_mode    = $CfgPerfil
+        rate_mode    = $recRateMode
+        # RED DE ICQ (21/09/2026). icq_red: '' (no habia red) | 'ok' (el video
+        # ICQ cupo y se quedo) | 'repetido' (se paso y se rehizo en techo) |
+        # 'abortado' (el vigilante la mato a mitad y se rehizo en techo; en ese
+        # caso icq_video_mbps es la MEDIA PARCIAL al abortar, no la final).
+        # icq_video_mbps: lo que gasto el video ICQ, se quedara o no. Con los
+        # dos se puede medir cuantas veces salta la red y por cuanto, que es lo
+        # que decide si compensa; sin ellos, un 'repetido' es indistinguible de
+        # un 'techo' de siempre.
+        icq_red        = $IcqRedEstado
+        icq_video_mbps = $IcqVideoMbps
         # 0 = automatico. Sin este campo, un encode con el bitrate puesto a mano
         # es indistinguible de uno normal al releer el jsonl, y contamina
         # cualquier analisis de "cuanto pide el GQ" o "cuantas veces recorta el
