@@ -194,10 +194,49 @@ def titulo_y_anyo(path):
 
 
 # ------------------------------------------------------- sincronia (lo esencial)
-def _voz_central(video, idx_audio, n):
-    """Envolvente de VOZ del canal central. El canal central es donde vive el
-    dialogo en un 5.1; bajar la mezcla a mono lo entierra bajo musica y efectos
-    y la correlacion deja de servir (probado, y dolio)."""
+def _canales_audio(video, idx_audio):
+    """Canales de la pista de audio indicada; 2 si no se puede averiguar."""
+    try:
+        r = subprocess.run([FFPROBE, "-v", "error", "-select_streams", "a",
+                            "-show_entries", "stream=index,channels", "-of", "json", video],
+                           capture_output=True, text=True, timeout=120)
+        for s in json.loads(r.stdout or "{}").get("streams", []):
+            if s.get("index") == idx_audio:
+                return int(s.get("channels") or 2)
+    except Exception:
+        pass
+    return 2
+
+
+SR_VOZ = 16000  # la que pide Silero VAD; el volumen se deriva del mismo audio
+
+
+def _extraer_voz(video, idx_audio):
+    """El audio en crudo (16 kHz, mono) de la mezcla que mejor lleva el
+    dialogo. El canal central es donde vive en un 5.1; bajar la mezcla a mono
+    lo entierra bajo musica y efectos y la correlacion deja de servir
+    (probado, y dolio).
+
+    Pero SOLO en 5.0 o mas. En un ESTEREO no existe c2, y ffmpeg no da error
+    ni aviso: devuelve silencio. Medido el 25/09/2026 con "Doc of Chucky"
+    (AAC estereo): c2 daba -91 dB de media y de maximo, silencio digital, y el
+    subtitulo se rechazaba con 0.3 sigma y pico en el borde de la ventana
+    (-60 s). Con L+R, 20.5 sigma y +0.35 s: el subtitulo estaba bien. Todos
+    los estereo de la biblioteca se estaban midiendo contra silencio. En
+    estereo el dialogo va en el centro de la imagen, que es justo L+R.
+
+    Una sola extraccion a 16 kHz para las dos envolventes (volumen y VAD): la
+    lectura del fichero es el coste caro, y sacar el audio dos veces para
+    medir dos formas distintas seria pagarlo dos veces."""
+    ch = _canales_audio(video, idx_audio)
+    if ch >= 5:
+        mezcla = "pan=mono|c0=c2"                          # 5.0/5.1/6.1/7.1
+    elif ch >= 3:
+        mezcla = "pan=mono|c0=0.34*c0+0.33*c1+0.33*c2"     # 3.0 o 2.1: c2 es C o LFE
+    elif ch == 2:
+        mezcla = "pan=mono|c0=0.5*c0+0.5*c1"
+    else:
+        mezcla = "pan=mono|c0=c0"
     wav = os.path.join(tempfile.gettempdir(),
                        f"_sf_{os.getpid()}_{idx_audio}.wav")
     try:
@@ -212,14 +251,14 @@ def _voz_central(video, idx_audio, n):
                         # incidente documentado alli, no con una medida propia;
                         # lo que si esta medido es que c2 da lo mismo que FC
                         # cuando el layout SI viene declarado.
-                        "-map", f"0:{idx_audio}", "-af", "pan=mono|c0=c2",
-                        "-ar", "8000", "-c:a", "pcm_s16le", wav],
+                        "-map", f"0:{idx_audio}", "-af", mezcla,
+                        "-ar", str(SR_VOZ), "-c:a", "pcm_s16le", wav],
                        capture_output=True, timeout=3600)
         if not os.path.isfile(wav) or os.path.getsize(wav) < 1024:
             return None
         # np.fromfile y NO np.memmap: el memmap deja el fichero abierto y en
         # Windows el borrado de despues falla.
-        raw = np.fromfile(wav, dtype=np.int16, offset=44)
+        return np.fromfile(wav, dtype=np.int16, offset=44)
     except Exception:
         return None
     finally:
@@ -227,16 +266,55 @@ def _voz_central(video, idx_audio, n):
             os.remove(wav)
         except Exception:
             pass
-    paso = 8000 // HZ
+
+
+def _envolvente_volumen(raw, n):
+    """'Hay sonido por encima del fondo', por volumen. Barata, y basta en la
+    inmensa mayoria de los casos (20+ sigma cuando el subtitulo esta bien)."""
+    if raw is None:
+        return None
+    paso = SR_VOZ // HZ
     util = (len(raw) // paso) * paso
     if util == 0:
         return None
     e = np.abs(raw[:util].astype(np.float32)).reshape(-1, paso).mean(axis=1)
-    del raw
     if len(e) < n:
         e = np.pad(e, (0, n - len(e)))
     e = np.log1p(e[:n])                       # comprime los picos de efectos
     return np.maximum(e - np.median(e), 0)    # "hay voz" por encima del fondo
+
+
+def _envolvente_vad(raw, n):
+    """'Hay VOZ HUMANA', con Silero VAD (el detector que trae faster-whisper).
+    Mas cara que el volumen -tarda del orden de un ferry de la duracion del
+    audio- pero no confunde musica o efectos con dialogo, que es justo lo que
+    puede dejar el volumen sin pico claro. Se usa solo cuando el volumen no
+    basta: medido el 25/09/2026, en la mayoria de casos sale PEOR que el
+    volumen (menos sigma) porque el volumen ya capta bien la voz por encima
+    del silencio; donde puede ganar es en musica/efectos fuertes con dialogo
+    flojo debajo, que es justo el patron que quedaba sin explicar.
+
+    Si `faster_whisper` no esta instalado, se salta sin romper nada: es una
+    segunda opinion, no la unica."""
+    if raw is None:
+        return None
+    try:
+        from faster_whisper.vad import get_speech_timestamps, VadOptions
+    except ImportError:
+        return None
+    audio = raw.astype(np.float32) / 32768.0
+    try:
+        tramos = get_speech_timestamps(
+            audio, VadOptions(min_silence_duration_ms=200, speech_pad_ms=0),
+            sampling_rate=SR_VOZ)
+    except Exception:
+        return None
+    m = np.zeros(n, dtype=np.float32)
+    for t in tramos:
+        a = int(t["start"] / SR_VOZ * HZ)
+        b = int(t["end"] / SR_VOZ * HZ)
+        m[max(0, a):min(n, b)] = 1.0
+    return m
 
 
 TS_RE = re.compile(r"(\d{2}):(\d{2}):(\d{2}),(\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2}),(\d{3})")
@@ -256,11 +334,11 @@ def leer_srt(path):
     return None
 
 
-def _senyal_subs(texto, n):
+def _senyal_subs(texto, n, factor=1.0):
     v = np.zeros(n, dtype=np.float32)
     for m in TS_RE.finditer(texto):
-        a = int(_ms(*m.group(1, 2, 3, 4)) / 1000.0 * HZ)
-        b = int(_ms(*m.group(5, 6, 7, 8)) / 1000.0 * HZ)
+        a = int(_ms(*m.group(1, 2, 3, 4)) / 1000.0 * factor * HZ)
+        b = int(_ms(*m.group(5, 6, 7, 8)) / 1000.0 * factor * HZ)
         if b > a:
             v[max(0, a):min(n, b)] = 1.0
     return v
@@ -272,33 +350,20 @@ def _norm(x):
     return x / s if s > 0 else x
 
 
-def verificar_sync(video, srt_texto, idx_audio, duracion, max_s=60.0):
-    """Correlaciona 'hay subtitulo' contra 'hay voz'. Devuelve dict con:
-        offset_s : cuanto hay que DESPLAZAR el subtitulo para que cuadre
-        sigma    : cuanto destaca el pico sobre el resto (confianza)
-        ok       : si se considera demostrado
-    Es la misma idea de ffsubsync, con las piezas que ya tiene el proyecto.
-    """
-    n = int(duracion * HZ)
-    if n <= 0:
-        return {"ok": False, "motivo": "duracion desconocida"}
-    aud = _voz_central(video, idx_audio, n)
-    if aud is None:
-        return {"ok": False, "motivo": "no se pudo extraer el canal central"}
-    aud = _norm(aud)
-    sub = _senyal_subs(srt_texto, n)
-    # Minimo de MATERIA para medir. Antes bastaban 10 s de subtitulo dentro del
-    # fichero, y eso no da para nada: con un clip de 5 min solo caian 3 o 4
-    # lineas dentro y todos los picos salian a 2 sigma. No es que los
-    # subtitulos fueran malos: es que la medicion era imposible. Se distingue
-    # con un motivo propio ('inmedible') para que el llamante deje de gastar
-    # descargas probando candidatos que van a fallar igual.
-    if sub.sum() < 120 * HZ:
-        return {"ok": False, "inmedible": True,
-                "motivo": f"solo {sub.sum()/HZ:.0f} s de subtitulo dentro del "
-                          f"fichero: no hay material para medir"}
-    sub = _norm(sub)
+# Velocidades tipicas entre la version para la que se hizo un subtitulo y el
+# video que se tiene: 24 frente a 23.976 (NTSC, 1001/1000) y 25 frente a
+# 23.976 o 24 (PAL). Un solo desplazamiento no arregla una deriva que crece con
+# el tiempo. Medido el 25/09/2026 con "In Search of Darkness III": sin tocar la
+# velocidad, 3.1 sigma y rechazado; con 1001/1000, 19.9 sigma, r de 0.19 a
+# 0.71 y desfase residual -0.05 s. El subtitulo era bueno.
+FACTORES_VELOCIDAD = (1001 / 1000, 1000 / 1001,
+                      25 / (24000 / 1001), (24000 / 1001) / 25,
+                      25 / 24, 24 / 25)
 
+
+def _barrido(aud, sub, n, max_s):
+    """Busca el desfase con mejor correlacion. Devuelve (desfase_s, sigma, r)
+    o None si no hay solape suficiente en ningun desfase."""
     vals, lags = [], []
     for lag in range(int(-max_s * HZ), int(max_s * HZ) + 1):
         if lag >= 0:
@@ -322,13 +387,86 @@ def verificar_sync(video, srt_texto, idx_audio, duracion, max_s=60.0):
         lags.append(lag / HZ)
         vals.append(float((a * b).sum() / (da * db)))
     if not vals:
-        return {"ok": False, "motivo": "sin solape suficiente"}
+        return None
     lags = np.array(lags)
     vals = np.array(vals)
     k = int(np.argmax(vals))
     pico = float(lags[k])
     fuera = vals[np.abs(lags - pico) > 2.0]
     sigma = float((vals[k] - fuera.mean()) / (fuera.std() or 1)) if len(fuera) else 0.0
+    return pico, sigma, float(vals[k])
+
+
+def verificar_sync(video, srt_texto, idx_audio, duracion, max_s=60.0):
+    """Correlaciona 'hay subtitulo' contra 'hay voz'. Devuelve dict con:
+        factor   : por cuanto hay que MULTIPLICAR los tiempos (1.0 si no hace
+                   falta); se aplica ANTES de desplazar
+        offset_s : cuanto hay que DESPLAZAR el subtitulo para que cuadre
+        sigma    : cuanto destaca el pico sobre el resto (confianza)
+        ok       : si se considera demostrado
+    Es la misma idea de ffsubsync, con las piezas que ya tiene el proyecto.
+    """
+    n = int(duracion * HZ)
+    if n <= 0:
+        return {"ok": False, "motivo": "duracion desconocida"}
+    sub = _senyal_subs(srt_texto, n)
+    # Minimo de MATERIA para medir. Antes bastaban 10 s de subtitulo dentro del
+    # fichero, y eso no da para nada: con un clip de 5 min solo caian 3 o 4
+    # lineas dentro y todos los picos salian a 2 sigma. No es que los
+    # subtitulos fueran malos: es que la medicion era imposible. Se distingue
+    # con un motivo propio ('inmedible') para que el llamante deje de gastar
+    # descargas probando candidatos que van a fallar igual.
+    if sub.sum() < 120 * HZ:
+        return {"ok": False, "inmedible": True,
+                "motivo": f"solo {sub.sum()/HZ:.0f} s de subtitulo dentro del "
+                          f"fichero: no hay material para medir"}
+
+    raw = _extraer_voz(video, idx_audio)
+    if raw is None:
+        return {"ok": False, "motivo": "no se pudo extraer el audio"}
+
+    def mejor_con(aud_cruda):
+        """Barrido normal y, si el pico no es firme, prueba de velocidades.
+        Devuelve (factor, pico, sigma, r) o None si no hay ni envolvente."""
+        env = aud_cruda(raw, n)
+        if env is None:
+            return None
+        env = _norm(env)
+        base = _barrido(env, _norm(sub), n, max_s)
+        if base is None:
+            return None
+        factor, resultado = 1.0, base
+        # Las velocidades se prueban SIEMPRE. Antes solo si el pico sin tocarla
+        # bajaba de 8 sigma, umbral sacado de UN caso (5,7 h y 20 s de deriva:
+        # 3.1 sigma). Probado el 25/09/2026 con respuesta conocida -"Una breve
+        # historia del tiempo", 80 min, subtitulo estirado x1.001 a proposito-:
+        # la deriva era de 4.8 s, el pico se quedo en 12.2 sigma (36.8 sin
+        # estirar), no se probo ninguna velocidad y se aplico un desfase fijo de
+        # -2.35 s que dejaba el principio PEOR que antes. En una pelicula normal
+        # la deriva NTSC emborrona el pico pero no lo hunde.
+        # Lo que sigue protegiendo de falsos positivos es el margen: un factor
+        # distinto de 1 tiene que GANAR con holgura (50 % mas de sigma). Un
+        # subtitulo bien sincronizado da su mejor pico sin reescalar.
+        candidato = None
+        for f in FACTORES_VELOCIDAD:
+            res = _barrido(env, _norm(_senyal_subs(srt_texto, n, f)), n, max_s)
+            if res and (candidato is None or res[1] > candidato[1][1]):
+                candidato = (f, res)
+        if candidato and candidato[1][1] >= 4.0 and candidato[1][1] >= 1.5 * base[1]:
+            factor, resultado = candidato
+        return factor, *resultado
+
+    factor, pico, sigma, r = mejor_con(_envolvente_volumen) or (1.0, 0.0, 0.0, 0.0)
+
+    # Silero VAD como segunda opinion: mas caro (tarda del orden del propio
+    # audio), asi que solo si el volumen no bastó. Medido el 25/09/2026: en la
+    # mayoria de casos el volumen ya gana; donde VAD puede ganar es musica o
+    # efectos fuertes con dialogo flojo debajo, que el volumen confunde con
+    # "hay sonido" y el VAD no.
+    if sigma < 8.0:
+        alt = mejor_con(_envolvente_vad)
+        if alt and alt[2] > sigma:
+            factor, pico, sigma, r = alt
     # SIGNO (comprobado con un caso de respuesta conocida el 07/08/2026, porque
     # lo tenia AL REVES y eso es peor que no medir: con un desfase mayor que la
     # tolerancia, corregia en direccion contraria y DUPLICABA el error).
@@ -339,12 +477,14 @@ def verificar_sync(video, srt_texto, idx_audio, duracion, max_s=60.0):
     # Por eso se marca como 'inmedible' y el llamante deja de gastar cupo.
     # (Un subtitulo de OTRO montaje da pico FUERTE en un sitio raro, y ese caso
     #  se resuelve solo desplazandolo.)
-    return {"ok": sigma >= 4.0, "offset_s": pico, "sigma": sigma, "r": float(vals[k]),
+    return {"ok": sigma >= 4.0, "offset_s": pico, "factor": factor, "sigma": sigma, "r": r,
             "inmedible": sigma < 4.0,
             "motivo": "" if sigma >= 4.0 else f"pico debil ({sigma:.1f} sigma)"}
 
 
-def desplazar_srt(texto, shift_ms):
+def desplazar_srt(texto, shift_ms, factor=1.0):
+    """Reescala los tiempos por 'factor' y luego desplaza 'shift_ms'. El orden
+    importa: verificar_sync mide el desfase sobre los tiempos ya reescalados."""
     def a_txt(ms):
         ms = max(0, int(round(ms)))
         h, r = divmod(ms, 3600000)
@@ -353,8 +493,8 @@ def desplazar_srt(texto, shift_ms):
         return f"{h:02d}:{m:02d}:{s:02d},{x:03d}"
 
     def rep(m):
-        return (a_txt(_ms(*m.group(1, 2, 3, 4)) + shift_ms) + " --> " +
-                a_txt(_ms(*m.group(5, 6, 7, 8)) + shift_ms))
+        return (a_txt(_ms(*m.group(1, 2, 3, 4)) * factor + shift_ms) + " --> " +
+                a_txt(_ms(*m.group(5, 6, 7, 8)) * factor + shift_ms))
 
     return TS_RE.sub(rep, texto)
 
@@ -590,6 +730,12 @@ def _aceptar(video, texto, idx_audio, duracion, etq, tolerancia_ms=400):
     if not v.get("ok"):
         return None, f"RECHAZADO ({v.get('motivo')})", bool(v.get("inmedible"))
     off_ms = v["offset_s"] * 1000.0
+    factor = v.get("factor", 1.0)
+    if factor != 1.0:
+        # Con otra velocidad hay que reescribir SIEMPRE, aunque el desfase
+        # residual sea pequenyo: la deriva crece con el tiempo.
+        return (desplazar_srt(texto, off_ms, factor),
+                f"OK reescalado x{factor:.5f} y desplazado {off_ms:+.0f} ms ({v['sigma']:.1f} sigma)", False)
     if abs(off_ms) <= tolerancia_ms:
         return texto, f"OK sin tocar (desfase {off_ms:+.0f} ms, {v['sigma']:.1f} sigma)", False
     return (desplazar_srt(texto, off_ms),
@@ -825,6 +971,17 @@ def main():
     ap.add_argument("--titulo", default="")
     ap.add_argument("--anyo", type=int, default=0)
     ap.add_argument("--out", default="")
+    ap.add_argument("--verificar-srt", default="",
+                    help="Modo estrecho: medir un SRT YA EXTRAIDO contra el audio del "
+                         "propio video y salir. No busca ni muxea nada; lo usa "
+                         "encode.ps1 para las pistas de texto nativas, que antes se "
+                         "copiaban sin verificar.")
+    ap.add_argument("--audio-index", type=int, default=-1,
+                    help="Indice ABSOLUTO de ffprobe (0:N) de la pista de audio; "
+                         "obligatorio con --verificar-srt")
+    ap.add_argument("--reescribir-en", default="",
+                    help="Con --verificar-srt: si hace falta corregir factor u "
+                         "offset, escribir el SRT ya corregido aqui")
     a = ap.parse_args()
 
     if a.keepalive:
@@ -834,6 +991,36 @@ def main():
     if not os.path.isfile(a.video):
         log(f"ERROR: no existe {a.video}")
         return 1
+
+    if a.verificar_srt:
+        # Un solo caso de uso: encode.ps1 ya tiene la pista extraida a un
+        # temporal y solo quiere saber si hace falta tocarla. Reutiliza
+        # _aceptar(), la misma funcion que ya usa el flujo de busqueda externa
+        # -no reimplementar el umbral de tolerancia ni el reescalado aqui.
+        if a.audio_index < 0:
+            ap.error("--verificar-srt necesita --audio-index")
+        info = info_video(a.video)
+        if info is None:
+            print(json.dumps({"ok": False, "motivo": "ffprobe no pudo leer el fichero"}))
+            return 1
+        texto = leer_srt(a.verificar_srt)
+        if not texto:
+            print(json.dumps({"ok": False, "motivo": "no se pudo leer el srt"}))
+            return 1
+        if a.reescribir_en:
+            texto_final, informe, inmedible = _aceptar(
+                a.video, texto, a.audio_index, info["duracion"], "[nativo]")
+            escrito = False
+            if texto_final is not None and texto_final != texto:
+                with open(a.reescribir_en, "w", encoding="utf-8") as f:
+                    f.write(texto_final)
+                escrito = True
+            print(json.dumps({"ok": texto_final is not None, "informe": informe,
+                              "inmedible": inmedible, "escrito": escrito}, ensure_ascii=False))
+            return 0 if texto_final is not None else 2
+        resultado = verificar_sync(a.video, texto, a.audio_index, info["duracion"])
+        print(json.dumps(resultado, ensure_ascii=False))
+        return 0 if resultado.get("ok") else 2
 
     info = info_video(a.video)
     if info is None:
