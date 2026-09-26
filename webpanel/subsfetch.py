@@ -819,6 +819,16 @@ def desde_opensubtitles(video, info, titulo, anyo, quiere, cfg):
     except Exception:
         pass
 
+    # POR IMDb ANTES QUE POR TITULO (26/09/2026). Buscando 'Be Water' (2020)
+    # por titulo, OpenSubtitles devolvio 'Black Water: Abyss' y 'Some
+    # Southern Waters': otras peliculas. Por IMDb daba 0, que era la verdad
+    # -no hay ningun subtitulo suyo-. Ademas el corte de 'pico debil: no se
+    # prueban mas' solo es valido si los candidatos son de ESTA pelicula; con
+    # un subtitulo de otra, el pico sale debil por el subtitulo y no por el
+    # fichero. Con IMDb conocido, el titulo ya NO se consulta.
+    imdb, es_serie, temp, ep = imdb_de(video)
+    imdb_num = int(imdb[2:]) if imdb else None
+
     for tipo in quiere:
         if tipo in salida:
             continue
@@ -830,12 +840,22 @@ def desde_opensubtitles(video, info, titulo, anyo, quiere, cfg):
             if forzado:
                 q["foreign_parts_only"] = "only"
             consultas.append(("hash", q))
-        q2 = {"query": titulo, "languages": lang, "order_by": "download_count"}
-        if anyo:
-            q2["year"] = anyo
-        if forzado:
-            q2["foreign_parts_only"] = "only"
-        consultas.append(("titulo", q2))
+        if imdb_num:
+            if es_serie and temp is not None and ep is not None:
+                q3 = {"parent_imdb_id": imdb_num, "season_number": temp,
+                      "episode_number": ep, "languages": lang}
+            else:
+                q3 = {"imdb_id": imdb_num, "languages": lang}
+            if forzado:
+                q3["foreign_parts_only"] = "only"
+            consultas.append(("IMDb", q3))
+        else:
+            q2 = {"query": titulo, "languages": lang, "order_by": "download_count"}
+            if anyo:
+                q2["year"] = anyo
+            if forzado:
+                q2["foreign_parts_only"] = "only"
+            consultas.append(("titulo", q2))
 
         candidatos = []
         for como, q in consultas:
@@ -905,6 +925,249 @@ def desde_opensubtitles(video, info, titulo, anyo, quiere, cfg):
                 break
         if os_api.restantes is not None:
             log(f"  [os] descargas restantes hoy: {os_api.restantes}")
+    return salida
+
+
+# ------------------------------------------------------------- SubSource
+# Segunda fuente de internet (26/09/2026). El motivo es la CUOTA: OpenSubtitles
+# da 20 descargas al dia y en la biblioteca faltaban subtitulos en ~2.550
+# ficheros, mas de seis meses a ese ritmo. SubSource da 7.200 peticiones al dia
+# por clave (cabeceras X-RateLimit-*: 60 por minuto). Se consulta ANTES que
+# OpenSubtitles para reservar ese cupo a lo que aqui no aparezca.
+#
+# Lo que baja de aqui pasa por _aceptar EXACTAMENTE igual que las otras
+# fuentes: nada se da por bueno sin medirlo contra el audio del destino.
+#
+# La clave vive en subsource.json, que esta en el .gitignore del repo (y el
+# repo es PUBLICO). No se escribe nunca en el log.
+SS_CFG_PATH = os.path.join(os.path.dirname(CFG_PATH), "subsource.json")
+SS_API = "https://api.subsource.net/api/v1"
+SS_LANG = {"es": "spanish", "en": "english"}
+SE_RE = re.compile(r"[Ss](\d{1,2})[ ._-]?[Ee](\d{1,3})")
+
+
+def cargar_config_subsource():
+    if not os.path.isfile(SS_CFG_PATH):
+        return None
+    try:
+        with open(SS_CFG_PATH, encoding="utf-8") as f:
+            cfg = json.load(f)
+    except Exception:
+        return None
+    if not (cfg.get("api_key") or "").strip():
+        return None
+    return cfg
+
+
+class SubSource:
+    """Cliente minimo de la API de SubSource. Los nombres de parametros no se
+    han supuesto: `searchType` lo pide la propia API en su mensaje de error, y
+    los filtros de /subtitles (language, foreignParts...) los devuelve ella
+    misma en el campo `filters` de cada respuesta."""
+
+    def __init__(self, cfg):
+        self.clave = cfg["api_key"].strip()
+        self.agente = cfg.get("user_agent", "MediaBox/1.0")
+
+    def _pedir(self, ruta, params=None, crudo=False):
+        url = SS_API + ruta
+        if params:
+            url += "?" + urllib.parse.urlencode(params)
+        req = urllib.request.Request(url, headers={
+            "X-API-Key": self.clave, "Accept": "application/json",
+            "User-Agent": self.agente})
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                datos = r.read()
+                if crudo:
+                    return r.status, datos
+                return r.status, json.loads(datos.decode("utf-8", "replace"))
+        except urllib.error.HTTPError as e:
+            return e.code, None
+        except Exception:
+            return 0, None
+
+    def fichas(self, imdb=None, texto=None):
+        if imdb:
+            s, b = self._pedir("/movies/search", {"searchType": "imdb", "imdb": imdb})
+        else:
+            s, b = self._pedir("/movies/search", {"searchType": "text", "q": texto})
+        if s != 200 or not b:
+            return []
+        return b.get("data") or []
+
+    def subtitulos(self, movie_id, idioma, forzado):
+        # limit=100: por defecto pagina de 20 en 20, y con 20 una pelicula
+        # popular (Matrix: 484 subtitulos) no ensenyaba NINGUNO en espanyol.
+        q = {"movieId": movie_id, "language": idioma, "limit": 100}
+        if forzado:
+            q["foreignParts"] = "true"
+        s, b = self._pedir("/subtitles", q)
+        if s != 200 or not b:
+            return []
+        return b.get("data") or []
+
+    def descargar(self, sub_id):
+        s, datos = self._pedir("/subtitles/%s/download" % sub_id, crudo=True)
+        if s != 200:
+            return None
+        return datos
+
+
+def _imdb_en_nfo(nfo):
+    try:
+        with open(nfo, encoding="utf-8", errors="replace") as f:
+            t = f.read()
+    except OSError:
+        return None
+    m = (re.search(r'<uniqueid[^>]*type="imdb"[^>]*>\s*(tt\d+)\s*<', t)
+         or re.search(r"<imdb(?:id)?>\s*(tt\d+)\s*<", t))
+    return m.group(1) if m else None
+
+
+def imdb_de(video):
+    """(imdb, es_serie, temporada, episodio), leyendo los .nfo que deja
+    tinyMediaManager. Pelicula: el .nfo junto al video. Episodio: el
+    tvshow.nfo de la raiz de la serie; el .nfo del episodio trae el IMDb DEL
+    EPISODIO, que no sirve para buscar la serie."""
+    m = SE_RE.search(os.path.basename(video))
+    carpeta = os.path.dirname(video)
+    if m:
+        temp, ep = int(m.group(1)), int(m.group(2))
+        d = carpeta
+        for _ in range(3):
+            nfo = os.path.join(d, "tvshow.nfo")
+            if os.path.isfile(nfo):
+                return _imdb_en_nfo(nfo), True, temp, ep
+            d = os.path.dirname(d)
+        return None, True, temp, ep
+    nfo = os.path.splitext(video)[0] + ".nfo"
+    if not os.path.isfile(nfo):
+        try:
+            cands = [f for f in os.listdir(carpeta) if f.lower().endswith(".nfo")]
+        except OSError:
+            cands = []
+        nfo = os.path.join(carpeta, cands[0]) if len(cands) == 1 else None
+    return (_imdb_en_nfo(nfo) if nfo else None), False, None, None
+
+
+def _srt_del_zip(datos, temporada, episodio):
+    """El texto del .srt que toca. Un paquete de temporada trae uno por
+    episodio y se elige por su SxxEyy; si ninguno es el episodio, NO se coge
+    otro por aproximacion. En una pelicula, el unico o el mayor."""
+    try:
+        z = zipfile.ZipFile(io.BytesIO(datos))
+    except Exception:
+        return None
+    srts = [n for n in z.namelist() if n.lower().endswith(".srt")]
+    if not srts:
+        return None
+    if episodio is not None:
+        buenos = []
+        for n in srts:
+            m = SE_RE.search(os.path.basename(n))
+            if m and int(m.group(2)) == episodio and (temporada is None or int(m.group(1)) == temporada):
+                buenos.append(n)
+        if not buenos:
+            return None
+        elegido = buenos[0]
+    else:
+        elegido = max(srts, key=lambda n: z.getinfo(n).file_size)
+    crudo = z.read(elegido)
+    for enc in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
+        try:
+            return crudo.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return None
+
+
+def _puntuar_ss(cand, nombre_video):
+    rel = " ".join(cand.get("releaseInfo") or []).lower()
+    obj = nombre_video.lower()
+    p = 0.0
+    for palabra in ("bluray", "bdrip", "brrip", "remux", "webrip", "web-dl", "web",
+                    "dvdrip", "hdtv", "2160p", "1080p", "720p"):
+        if palabra in rel and palabra in obj:
+            p += 8
+    if cand.get("hearingImpaired"):
+        p -= 10
+    try:
+        p += min(float(cand.get("downloads") or 0) ** 0.5, 40)
+    except (TypeError, ValueError):
+        pass
+    return p
+
+
+def desde_subsource(video, info, titulo, anyo, quiere, cfg):
+    """Cubre lo que falte con SubSource. Mismo contrato que desde_opensubtitles."""
+    salida = {}
+    if not cfg:
+        log("  [ss] sin subsource.json o sin clave: me lo salto.")
+        return salida
+    ss = SubSource(cfg)
+    imdb, es_serie, temp, ep = imdb_de(video)
+    if imdb:
+        fichas = ss.fichas(imdb=imdb)
+        como = "IMDb %s" % imdb
+    else:
+        fichas = ss.fichas(texto=titulo)
+        como = "titulo"
+        if anyo:
+            mismas = [f for f in fichas if str(f.get("releaseYear")) == str(anyo)]
+            fichas = mismas or fichas
+    if not fichas:
+        log("  [ss] no aparece en SubSource (buscado por %s)." % como)
+        return salida
+    if es_serie:
+        # Una ficha por temporada; la 0 suele ser la serie completa.
+        propias = [f for f in fichas if f.get("season") == temp]
+        resto = [f for f in fichas if f.get("season") in (0, None) and f not in propias]
+        fichas = propias + resto
+    else:
+        fichas = fichas[:1]
+    log("  [ss] %d ficha(s) por %s" % (len(fichas), como))
+
+    nombre = os.path.basename(video)
+    for tipo in quiere:
+        if tipo in salida:
+            continue
+        lang = "es" if tipo.startswith("es") else "en"
+        forzado = tipo.endswith("forzado")
+        candidatos = []
+        for f in fichas[:3]:
+            candidatos += ss.subtitulos(f["movieId"], SS_LANG[lang], forzado)
+        if not candidatos:
+            log("  [ss] %s: sin resultados." % tipo)
+            continue
+        candidatos.sort(key=lambda c: _puntuar_ss(c, nombre), reverse=True)
+        log("  [ss] %s: %d candidato(s)" % (tipo, len(candidatos)))
+        idx_audio = audio_para_idioma(info, lang)
+        if idx_audio is None:
+            log("       el destino no tiene audio con el que verificar.")
+            continue
+        for c in candidatos[:4]:
+            rel = " | ".join(c.get("releaseInfo") or [])[:55]
+            log("  [ss] %s: probando '%s'..." % (tipo, rel))
+            datos = ss.descargar(c.get("subtitleId"))
+            if not datos:
+                log("       no se pudo descargar.")
+                continue
+            texto = _srt_del_zip(datos, temp, ep)
+            if not texto:
+                log("       el paquete no trae el episodio que toca (o no trae .srt).")
+                continue
+            if forzado and not parece_forzado(texto):
+                log("       descartado: dice ser forzado pero trae %d lineas." % n_entradas(texto))
+                continue
+            final, informe, inmedible = _aceptar(video, texto, idx_audio, info["duracion"], tipo)
+            log("       %s" % informe)
+            if final:
+                salida[tipo] = final
+                break
+            if inmedible:
+                log("       no hay forma de verificar con este fichero; no se prueban mas candidatos.")
+                break
     return salida
 
 
@@ -1102,6 +1365,12 @@ def main():
     try:
         encontrados = desde_biblioteca(a.video, info, titulo, anyo, pendientes, workdir)
         faltan = [t for t in pendientes if t not in encontrados]
+        # SubSource ANTES que OpenSubtitles: 7.200 peticiones al dia frente a 20.
+        # Asi el cupo pequenyo queda para lo que aqui no aparezca.
+        if faltan and not a.solo_local:
+            encontrados.update(
+                desde_subsource(a.video, info, titulo, anyo, faltan, cargar_config_subsource()))
+            faltan = [t for t in pendientes if t not in encontrados]
         if faltan and not a.solo_local:
             encontrados.update(
                 desde_opensubtitles(a.video, info, titulo, anyo, faltan, cargar_config()))
