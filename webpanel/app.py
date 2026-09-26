@@ -197,6 +197,13 @@ DONE_DIR  = os.path.join(BASE, "encoded")
 os.makedirs(LOG_DIR,  exist_ok=True)
 os.makedirs(DONE_DIR, exist_ok=True)
 
+# encode_logs es carpeta compartida a proposito (ver start-mediabox-core.ps1,
+# 26/08/2026: los watchers vuelcan aqui su salida para poder auditarla) con
+# ytdlp_*.log, *_remux_*.log, watcher-*.log y reordenar-*.log de otros
+# scripts. encode.ps1 nombra los suyos "AAAAMMDD_HHMMSS_<titulo>.log"; el
+# unico solapamiento es el remux, que empieza igual y luego mete "_remux_".
+RE_LOG_PELICULA = re.compile(r'^\d{8}_\d{6}_(?!remux_).+\.log$')
+
 VIDEO_EXTS = {".mkv", ".mp4", ".avi", ".mov", ".ts", ".m2ts", ".wmv", ".flv", ".webm", ".mpg", ".mpeg"}
 
 # TODO proceso hijo se lanza con esto. Sin el, cada ffprobe/taskkill/mkvmerge
@@ -505,6 +512,27 @@ ENC_RUNNING = os.path.join(BASE, "encode_running")
 STATUS_F    = os.path.join(TMP, "encode_status")
 PROG_F      = os.path.join(TMP, "encode_ffprog")
 PID_F       = os.path.join(TMP, "encode_pid")
+
+# ── RANURAS DE VIDEO ─────────────────────────────────────────────────────
+# encode.ps1 admite -Slot desde el 04/09/2026, porque dos encodes simultaneos
+# rinden 1,45x con salidas bit a bit identicas (medido el 17/08). La ranura 1
+# conserva los nombres de siempre -'encode_status', 'encode_pid',
+# 'encode_ffprog'- y por eso las tres constantes de arriba siguen valiendo tal
+# cual; las siguientes son 'encode2_*', 'encode3_*'...
+#
+# EL TOPE NO SE SINCRONIZA A MANO con el $MaxSlots del watcher: aqui solo se
+# mira que ranuras tienen fichero de estado. Un acuerdo 'acuerdate de cambiar
+# los dos' es exactamente lo que en este repositorio se ha desfasado cinco
+# veces seguidas. 4 es el mismo tope que el ValidateRange de encode.ps1.
+ENC_SLOT_MAX = 4
+
+def enc_slot_files(slot):
+    sfx = "" if slot <= 1 else str(slot)
+    return {
+        "status": os.path.join(TMP, "encode%s_status" % sfx),
+        "prog":   os.path.join(TMP, "encode%s_ffprog" % sfx),
+        "pid":    os.path.join(TMP, "encode%s_pid"    % sfx),
+    }
 # Flag de PAUSA de la cola de video: lo escribe el Stop del panel y lo respeta
 # encode-watch.ps1 (no coge nada nuevo mientras exista). Se quita con Resume.
 PAUSE_F     = os.path.join(TMP, "encode_paused")
@@ -609,15 +637,16 @@ def enc_pct_global(stage, pct_fase):
     return round(lo + (hi - lo) * p / 100.0, 1)
 
 
-def enc_read_state():
-    state = _read_kv(STATUS_F, {"status": "idle", "file": "", "duration": 0, "error": ""})
+def enc_read_state(slot=1):
+    state = _read_kv(enc_slot_files(slot)["status"],
+                     {"status": "idle", "file": "", "duration": 0, "error": ""})
     try:
         state["duration"] = float(state.get("duration", 0) or 0)
     except (TypeError, ValueError):
         state["duration"] = 0
     return state
 
-def enc_read_progress():
+def enc_read_progress(slot=1):
     """Ultimo bloque COMPLETO del fichero -progress de ffmpeg.
 
     Antes esto separaba bloques por linea en blanco ('\\n\\n'), y ffmpeg NO escribe
@@ -636,7 +665,7 @@ def enc_read_progress():
     """
     last = {}
     try:
-        with open(PROG_F, "rb") as f:
+        with open(enc_slot_files(slot)["prog"], "rb") as f:
             f.seek(0, 2); size = f.tell()
             f.seek(max(0, size - 8192))
             tail = f.read().decode("utf-8", errors="replace")
@@ -671,7 +700,7 @@ def enc_read_progress():
 _enc_cache = {"sig": None, "queue": [], "running": [], "done": []}
 
 # Muestras (instante, segundos_de_video_codificados) para la ETA por ritmo
-# reciente. Ver el bloque de ETA en enc_build_payload.
+# reciente. Ver el bloque de ETA en enc_job_view.
 #
 # El maxlen es GENEROSO a proposito. La ventana que importa es la de TIEMPO (120 s,
 # podada mas abajo), pero quien alimenta esta cola es enc_build_payload, y eso
@@ -679,7 +708,21 @@ _enc_cache = {"sig": None, "queue": [], "running": [], "done": []}
 # tres pestanyas abiertas la cola se llenaba en 66 s, o sea que la ventana de la
 # ETA se encogia a la mitad sin que nada lo dijera. 4000 aguanta 120 s aunque haya
 # treinta clientes.
-_eta_hist = collections.deque(maxlen=4000)
+#
+# UNA COLA POR RANURA (04/09/2026). Era UNA sola deque global. Con dos
+# encodes a la vez las muestras de los dos trabajos caian en el mismo sitio
+# y el 'ritmo' salia de restar los segundos codificados de UNA pelicula a
+# los de OTRA: una ETA inventada. Peor aun, la guarda de 'si secs RETROCEDE
+# es que empezo otro encode' se disparaba en cada tick al alternar ranuras y
+# vaciaba la ventana entera, asi que ninguna de las dos llegaba a tener ETA.
+_eta_hist = {}
+
+def _eta_hist_slot(slot):
+    h = _eta_hist.get(slot)
+    if h is None:
+        h = collections.deque(maxlen=4000)
+        _eta_hist[slot] = h
+    return h
 
 def _enc_dir_sig(path):
     try:
@@ -814,7 +857,11 @@ def _enc_rebuild_listing():
         except: pass
         done.append({"name": name, "size": out_size, "src_size": src_size,
                       "reduction": reduction, "logged": rec is not None,
-                      "subs_dropped": int((rec or {}).get("subs_dropped", 0) or 0)})
+                      "subs_dropped": int((rec or {}).get("subs_dropped", 0) or 0),
+                      # Subtitulos NATIVOS que se corrigieron antes del mux (25/09/2026):
+                      # ver encode.ps1, verificacion de sync de $DoSubsPhase. Lista de
+                      # {idx, lang, informe}; vacia si ninguno hizo falta corregir.
+                      "subs_resync": (rec or {}).get("subs_resync") or []})
     return queue, running, done
 
 _enc_cache_lock = threading.Lock()
@@ -861,9 +908,46 @@ def _enc_get_listing():
             _enc_cache_lock.release()
     return _enc_cache["queue"], _enc_cache["running"], _enc_cache["done"]
 
-def enc_build_payload():
-    state  = enc_read_state()
-    prog   = enc_read_progress()
+def enc_slots_extra():
+    """Las ranuras 2+ que tengan un trabajo VIVO.
+
+    La 1 NO entra: va en la raiz del payload, con los mismos campos de
+    siempre, para que el panel que ya existe no cambie en nada mientras
+    $MaxSlots siga en 1. Lo de aqui es aditivo.
+
+    Cada una trae EXACTAMENTE los mismos campos que la 1 -pct, stage, eta,
+    pct_fase...- porque el panel les pinta su propia barra, y salen de
+    enc_job_view, o sea de la MISMA cuenta. Una barra calculada aparte
+    acabaria contando distinto que la de arriba.
+    """
+    fuera = []
+    for s in range(2, ENC_SLOT_MAX + 1):
+        # Sin fichero de estado esa ranura no se ha usado NUNCA: no se lee, y
+        # sobre todo no se le crea nada.
+        if not os.path.exists(enc_slot_files(s)["status"]):
+            continue
+        v = enc_job_view(s)
+        if v.get("status", "idle") in ("idle", ""):
+            continue
+        v["slot"] = s
+        fuera.append(v)
+    return fuera
+
+def enc_job_view(slot=1):
+    """Todo lo que se sabe del trabajo de video de UNA ranura.
+
+    Esto era el cuerpo de enc_build_payload y solo sabia de la ranura 1. Se
+    parte en dos porque el panel tiene que pintar la BARRA de las ranuras 2+
+    igual que la de la 1, y el calculo del porcentaje -los dos metodos, el
+    out_time congelado, la ETA por ritmo reciente, ENC_BANDAS- son 150 lineas
+    que en este repositorio han divergido CADA VEZ que se han copiado
+    (New-DeeAtmosXml, el motor de audio, Clear-JobTemps). Una sola copia,
+    parametrizada: si las dos barras cuentan distinto, no hay forma de saber
+    cual miente.
+    """
+    state  = enc_read_state(slot)
+    prog   = enc_read_progress(slot)
+    hist   = _eta_hist_slot(slot)
     status = state.get("status", "idle")
     dur    = float(state.get("duration", 0) or 0)
     fps = prog.get("fps", ""); speed = prog.get("speed", "")
@@ -934,17 +1018,17 @@ def enc_build_payload():
     if secs > 0:
         try:
             ahora = time.time()
-            _eta_hist.append((ahora, secs))
+            hist.append((ahora, secs))
             # Ventana de ~2 min; se descartan muestras viejas y las de otro trabajo
             # (si secs RETROCEDE es que empezo un encode nuevo: se limpia).
-            while len(_eta_hist) >= 2 and _eta_hist[0][1] > secs:
-                _eta_hist.clear(); _eta_hist.append((ahora, secs))
-            while len(_eta_hist) >= 2 and ahora - _eta_hist[0][0] > 120:
-                _eta_hist.popleft()
+            while len(hist) >= 2 and hist[0][1] > secs:
+                hist.clear(); hist.append((ahora, secs))
+            while len(hist) >= 2 and ahora - hist[0][0] > 120:
+                hist.popleft()
             ritmo = 0.0
-            if len(_eta_hist) >= 2:
-                dt = ahora - _eta_hist[0][0]
-                dsec = secs - _eta_hist[0][1]
+            if len(hist) >= 2:
+                dt = ahora - hist[0][0]
+                dsec = secs - hist[0][1]
                 if dt >= 10 and dsec > 0:
                     ritmo = dsec / dt          # segundos de video por segundo real
             if ritmo <= 0 and speed:           # aun sin historial: el de ffmpeg
@@ -1039,18 +1123,29 @@ def enc_build_payload():
         g = enc_pct_global(stage or "video", pct)
         if g is not None:
             pct = g
-    queue, running, done = _enc_get_listing()
     return {"status": status, "file": state.get("file",""), "error": state.get("error",""),
             "fps": fps, "speed": speed, "bitrate": bitrate, "out_time": out_time,
             "pct": pct, "pct_fase": pct_fase, "eta": eta, "stage": stage,
-            "queue": queue, "running": running, "done": done,
+            "duration": dur,
             # Avance del audio cuando corre EN PARALELO con el encode de video
             # (encode.ps1, $ParallelAudioVideo). Va en campos APARTE y no en
             # stage/pct a proposito: esos dos pisan el progreso del ffprog y
             # borran el ETA (ver el bloque de arriba), asi que el audio se pinta
             # como linea secundaria y el video sigue mandando en la barra.
             "audio_stage": state.get("audio_stage", ""),
-            "audio_pct": state.get("audio_pct", ""),
+            "audio_pct": state.get("audio_pct", "")}
+
+def enc_build_payload():
+    """El payload de la pestanya Encoder.
+
+    La ranura 1 va en la RAIZ, con los mismos nombres de campo de siempre: el
+    panel de toda la vida no cambia en nada mientras $MaxSlots siga en 1.
+    Lo que se anyade -'slots'- es aditivo.
+    """
+    d = dict(enc_job_view(1))
+    queue, running, done = _enc_get_listing()
+    d.update({
+            "queue": queue, "running": running, "done": done,
             "paused": os.path.exists(PAUSE_F),
             # Retencion: distinta de 'paused'. Ver HOLD_F.
             "hold": os.path.exists(HOLD_F),
@@ -1060,7 +1155,11 @@ def enc_build_payload():
             # mire: la pausa afecta a todo y tiene que verse desde cualquier sitio.
             # Sin esto era invisible: se quedaba puesta y el panel simplemente no
             # encolaba nada, sin decir por que.
-            "global_paused": os.path.exists(PIPELINE_PAUSED)}
+            "global_paused": os.path.exists(PIPELINE_PAUSED),
+            # Trabajos de video de las ranuras 2+. Lista VACIA mientras el
+            # watcher siga con $MaxSlots = 1, que es lo normal hoy.
+            "slots": enc_slots_extra()})
+    return d
 
 @app.route("/api/enc/status")
 def enc_status():
@@ -1092,6 +1191,36 @@ def _kill_pid(pid):
         except Exception:
             return False
 
+def enc_kill_slots():
+    """Mata el trabajo de TODAS las ranuras de video y las deja en idle.
+
+    EL STOP TIENE QUE PARAR DE VERDAD. Con dos ranuras vivas, matar solo la 1
+    dejaria la otra codificando mientras el panel dice que esta parado, que es
+    peor que no tener boton: el usuario se cree que ha parado.
+
+    Devuelve los PID que se han matado de verdad.
+    """
+    muertos = []
+    for s in range(1, ENC_SLOT_MAX + 1):
+        f = enc_slot_files(s)
+        # De las ranuras 2+ solo se toca lo que existe: si no hay fichero, esa
+        # ranura no se ha usado nunca y no hay que inventarle un 'idle'.
+        if s > 1 and not (os.path.exists(f["status"]) or os.path.exists(f["pid"])):
+            continue
+        try:
+            with open(f["pid"]) as fh:
+                pid = int(fh.read().strip())
+            if _kill_pid(pid):
+                muertos.append(pid)
+        except Exception:
+            pass
+        try:
+            with open(f["status"], "w") as fh:
+                fh.write("status=idle\n")
+        except Exception:
+            pass
+    return muertos
+
 @app.route("/api/enc/kill", methods=["POST"])
 def enc_kill():
     # Stop = parar TODO: mata el trabajo en curso Y PAUSA la cola (el watcher no
@@ -1103,15 +1232,10 @@ def enc_kill():
         open(PAUSE_F, "w").close()
     except Exception:
         pass
-    killed = None
-    try:
-        with open(PID_F) as f: pid = int(f.read().strip())
-        if _kill_pid(pid): killed = pid
-    except: pass
-    try:
-        with open(STATUS_F, "w") as f: f.write("status=idle\n")
-    except: pass
-    return jsonify({"ok": True, "killed": killed, "paused": True})
+    # TODAS las ranuras, no solo la 1: ver enc_kill_slots.
+    muertos = enc_kill_slots()
+    return jsonify({"ok": True, "killed": (muertos[0] if muertos else None),
+                    "killed_all": muertos, "paused": True})
 
 @app.route("/api/enc/resume", methods=["POST"])
 def enc_resume():
@@ -1318,18 +1442,17 @@ def enc_skip():
     # acumulados de encodes anteriores -> los "han fallado y se han borrado".
     # La salida parcial y los temporales los barre el watcher (Clean-JobLeftovers)
     # cuando el proceso muere, via el marcador encode_outfile.
-    killed = None
-    try:
-        with open(PID_F) as f: pid = int(f.read().strip())
-        if _kill_pid(pid): killed = pid
-    except: pass
-    with open(STATUS_F, "w") as f: f.write("status=idle\n")
-    return jsonify({"ok": True, "killed": killed, "deleted": []})
+    # TODAS las ranuras, por lo mismo que el Stop.
+    muertos = enc_kill_slots()
+    return jsonify({"ok": True, "killed": (muertos[0] if muertos else None),
+                    "killed_all": muertos, "deleted": []})
 
 @app.route("/api/enc/logs")
 def enc_logs():
     if not os.path.exists(LOG_DIR): return jsonify([])
-    files = sorted(glob.glob(os.path.join(LOG_DIR, "*.log")), key=os.path.getmtime, reverse=True)[:30]
+    todos = glob.glob(os.path.join(LOG_DIR, "*.log"))
+    peliculas = [f for f in todos if RE_LOG_PELICULA.match(os.path.basename(f))]
+    files = sorted(peliculas, key=os.path.getmtime, reverse=True)[:30]
     return jsonify([{"name": os.path.basename(f), "size": os.path.getsize(f),
                      "mtime": int(os.path.getmtime(f))} for f in files])
 
@@ -3357,11 +3480,21 @@ def remux_measure():
                                     ("subs", quiere_subs),
                                     ("video", quiere_video)) if v)
     try:
+        # NO MEDIR DOS VECES LO MISMO (15/09/2026). Si el audio no engancha, la
+        # escalera de measure() ya baja por paquetes, subtitulos e imagen. Antes,
+        # las mediciones "adicionales" de aqui abajo se lanzaban igual salvo que
+        # el peldano hubiera sido EL ELEGIDO (fallback == ...): si la imagen se
+        # midio y no engancho, se volvia a medir entera para llegar al mismo
+        # sitio. Visto con Influencer (2022): dos pasadas de imagen de ~9 min
+        # cada una, con el mismo resultado, en una medicion que el panel
+        # anunciaba como "~199 s". 'intentos' trae lo que la escalera ya hizo.
+        intentos = {}
         m = remuxlib.measure(b["path"], int(b["index"]), s["path"], int(s["index"]),
-                             permitir=permitir)
+                             permitir=permitir, intentos=intentos)
         m["recommend"] = remuxlib.recommend(m, bool(s.get("objects")),
                                             for_subtitle=bool(j.get("for_subtitle")))
         m["permitir"] = list(permitir)
+        m["reutilizado"] = sorted(intentos)
         # SEGUNDA OPINION POR IMAGEN, solo si la pide el usuario con la casilla.
         # Por defecto no se toca nada: esto decodifica video y tarda minutos,
         # mientras que la medida por audio son segundos.
@@ -3389,12 +3522,16 @@ def remux_measure():
         # el milisegundo. No se repite si la medida principal YA vino por ahi.
         if quiere_subs and m.get("fallback") != "subs":
             try:
-                m["subs"] = remuxlib.medir_por_subtitulos(b["path"], s["path"])
+                m["subs"] = intentos.get("subs") or \
+                            remuxlib.medir_por_subtitulos(b["path"], s["path"])
             except Exception as e:
                 m["subs"] = {"ok": False, "error": str(e)}
         if quiere_video and m.get("fallback") != "video":
             try:
-                mv = remuxlib.measure(b["path"], int(b["index"]),
+                # La misma llamada que hace la escalera (mismas pistas, mismo
+                # modo), asi que si ya se hizo, el resultado es identico.
+                mv = intentos.get("video") or \
+                     remuxlib.measure(b["path"], int(b["index"]),
                                       s["path"], int(s["index"]), mode="video")
                 m["video"] = mv
                 if mv.get("ok") and m.get("ok"):

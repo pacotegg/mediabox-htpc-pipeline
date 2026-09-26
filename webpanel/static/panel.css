@@ -492,3 +492,20 @@ main{padding:24px 32px;max-width:1600px;margin:0 auto;display:flex;flex-directio
   .modal-overlay.open .browser-modal,.btn,.step,.tab-btn,.progress-card::before{
     animation:none !important;transition:none !important;}
 }
+
+/* Ranuras 2+ del encoder (04/09/2026, igualada a la 1 el 21/09/2026). Con
+   $MaxSlots = 2 corriendo de verdad, las dos ranuras procesan una pelicula
+   cada una: ninguna es "la principal", asi que llevan el mismo tamano de
+   letra y las mismas 4 cajas de FPS/Speed/Bitrate/Encoded que la ranura 1
+   (.stats-row/.stat, definidas arriba), no una linea de texto suelta.
+   ':empty' es lo que hace que, con $MaxSlots = 1, la tarjeta se vea
+   exactamente como se ha visto siempre, sin un hueco de mas. */
+.enc-slots { display: flex; flex-direction: column; gap: 16px; margin: 4px 0 0; }
+.enc-slots:empty { display: none; }
+.slot-job { border-top: 1px solid var(--border); padding-top: 14px; }
+.slot-head { display: flex; gap: 8px; align-items: baseline; margin-bottom: 16px;
+             min-width: 0; }
+.slot-tag { font-size: 11px; font-weight: 700; letter-spacing: .5px;
+            text-transform: uppercase; color: var(--muted); white-space: nowrap; }
+.slot-name { font-family: var(--sans); font-size: 18px; font-weight: 700; color: var(--white);
+             min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

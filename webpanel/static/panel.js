@@ -154,6 +154,78 @@ function browserSelect(path){
 // ENCODER
 // ══════════════════════════════════════════════════════════════════════════════
 
+// Color de la barra por fase. El post-proceso (reconstruir el contenedor y
+// escribir etiquetas) NO es el encode, y verlo cambiar de color explica por que
+// la barra sigue moviendose cuando ffmpeg ya termino.
+const ENC_FASE_COLOR={rebuild:"#4fc3f7",finalizing:"#4fc3f7"};
+// Que se esta haciendo en cada fase. Sube aqui -estaba dentro de updateEnc-
+// porque ahora la usan la barra de la ranura 1 Y las de las ranuras 2+: dos
+// tablas separadas se habrian desincronizado en cuanto se anyadiera una fase.
+const ENC_STAGE_TXT={extract:"extrayendo pista",truehdd:"decodificando TrueHD → Atmos",dee:"codificando DD+ JOC",ddp:"codificando DD+",subs:"OCR de subtítulos",analizando:"analizando fuente",verificando:"verificando fuente",
+  // Post-proceso. Antes no tenian texto y la barra se movia sin decir de que:
+  // son las dos fases que se comian hasta 20 min escondidas en el ultimo 3 %.
+  rebuild:"reconstruyendo contenedor",finalizing:"escribiendo etiquetas"};
+
+// El HTML que se pinto la ultima vez en #enc-slots. Sirve para NO reescribir
+// innerHTML en cada tick del SSE (una vez por segundo): al recrear los nodos,
+// la transicion CSS de .bar-fill se reinicia y la barra de la ranura 2 avanza a
+// tirones en vez de deslizarse como la de la 1. En una variable y no en un
+// data-* del propio div, que ahi acabaria duplicado dentro del DOM.
+let _encSlotsHtml = null;
+// Misma trampa que las ranuras (ver comentario arriba) pero con el <select> de
+// modo: reescribir enc-queue-list en cada tick del SSE recreaba el nodo y
+// CERRABA EL DESPLEGABLE justo cuando el usuario intentaba elegir ICQ/QVBR,
+// porque el siguiente % de progreso llegaba antes de que le diera tiempo a
+// hacer clic. Solo se toca el DOM si el HTML de verdad cambió.
+let _encQueueHtml = null;
+
+// Misma regla que setStat() (arriba) pero devuelta como HTML en vez de
+// escrita en un elemento fijo: las ranuras 2+ se reconstruyen enteras como
+// cadena en cada tick, no tienen id propio en el DOM.
+function statBoxHtml(etiqueta,val){
+  const ok=val&&val!=="N/A"&&val!=="0.0kbits/s";
+  return '<div class="stat"><div class="stat-label">'+etiqueta+'</div><div class="stat-value'+(ok?'':' empty')+'">'+(ok?esc(val):'—')+'</div></div>';
+}
+
+// UNA RANURA 2+, pintada EXACTAMENTE como la de arriba (igualadas el
+// 21/09/2026: con $MaxSlots=2 corriendo de verdad, ninguna de las dos es "la
+// principal"): su nombre, su barra, su ETA y las mismas 4 cajas de
+// FPS/Speed/Bitrate/Encoded. Los campos llegan de enc_job_view (app.py), o
+// sea de LA MISMA cuenta que alimenta la barra de la ranura 1.
+// esc() en TODO lo que se concatena: esto va a innerHTML y en esta biblioteca
+// hay peliculas con & y con apostrofe en el titulo.
+function encHtmlRanura(s){
+  const pct=parseFloat(s.pct)||0;
+  const col=ENC_FASE_COLOR[s.stage]||"";
+  const estilo="width:"+pct.toFixed(1)+"%"+(col?";background:"+col:"");
+  let der="";
+  if(s.eta){der="ETA <span>"+esc(s.eta)+"</span>";}
+  else{
+    let t=ENC_STAGE_TXT[s.stage]||"";
+    if(t&&(s.stage==="rebuild"||s.stage==="finalizing")&&s.pct_fase!=null){
+      t+=" "+Math.round(parseFloat(s.pct_fase)||0)+"%";
+    }
+    if(t){der="<span>"+esc(t)+"</span>";}
+  }
+  return '<div class="slot-job">'+
+           '<div class="slot-head">'+
+             '<span class="slot-tag">Ranura '+esc(s.slot)+'</span>'+
+             '<span class="slot-name">'+esc(s.file)+'</span>'+
+           '</div>'+
+           '<div class="progress-row slot-row">'+
+           '<div class="pct-label">'+(pct>0?pct.toFixed(1)+'%':'...')+'</div>'+
+             '<div class="bar-wrap"><div class="bar-fill bar-green" style="'+estilo+'"></div></div>'+
+             '<div class="eta-label">'+der+'</div>'+
+           '</div>'+
+           '<div class="stats-row">'+
+             statBoxHtml('FPS',s.fps)+
+             statBoxHtml('Speed',s.speed)+
+             statBoxHtml('Bitrate',s.bitrate)+
+             statBoxHtml('Encoded',s.out_time?String(s.out_time).split('.')[0]:'')+
+           '</div>'+
+         '</div>';
+}
+
 function updateEnc(d){
   const isEnc=d.status==="encoding", isErr=d.status==="error";
   const dot=document.getElementById("dot-enc");
@@ -180,8 +252,7 @@ function updateEnc(d){
   // Color por fase: el post-proceso (reconstruir el contenedor y escribir tags)
   // no es el encode, y verlo cambiar de color explica por que la barra sigue
   // moviendose cuando ffmpeg ya termino.
-  const FASE_COLOR={rebuild:"#4fc3f7",finalizing:"#4fc3f7"};
-  const col=FASE_COLOR[d.stage]||"";
+  const col=ENC_FASE_COLOR[d.stage]||"";
   if(col){ barEl.classList.remove("bar-green"); barEl.style.background=col; }
   else   { barEl.style.background=""; barEl.classList.add("bar-green"); }
   const pctEl=document.getElementById("enc-pct");
@@ -191,10 +262,7 @@ function updateEnc(d){
   // hay ETA (ffmpeg todavia no ha arrancado, asi que no hay nada que estimar).
   // Se reutiliza el hueco vacio del ETA para decir en que paso va: si no, la
   // barra se mueve durante ~20 min sin explicar de que.
-  const STAGE_TXT={extract:"extrayendo pista",truehdd:"decodificando TrueHD → Atmos",dee:"codificando DD+ JOC",ddp:"codificando DD+",subs:"OCR de subtítulos",analizando:"analizando fuente",verificando:"verificando fuente",
-    // Post-proceso. Antes no tenian texto y la barra se movia sin decir de que:
-    // son las dos fases que se comian hasta 20 min escondidas en el ultimo 3 %.
-    rebuild:"reconstruyendo contenedor",finalizing:"escribiendo etiquetas"};
+  const STAGE_TXT=ENC_STAGE_TXT;
   // En el post-proceso se enseña ademas el % DENTRO de la fase: la barra global va
   // por el 80 % y esto dice "reconstruyendo contenedor 34%", que es lo que de
   // verdad se quiere saber para estimar cuanto falta.
@@ -219,8 +287,23 @@ function updateEnc(d){
   setStat("enc-fps",d.fps);setStat("enc-speed",d.speed);setStat("enc-bitrate",d.bitrate);
   setStat("enc-time",d.out_time?d.out_time.split(".")[0]:"");
 
-  document.getElementById("enc-btn-stop").disabled=!isEnc;
-  document.getElementById("enc-btn-skip").disabled=!isEnc;
+  // RANURAS 2+ (04/09/2026). encode.ps1 admite -Slot y el watcher puede correr
+  // dos trabajos de video a la vez (1,45x medido, salidas bit a bit identicas).
+  // La ranura 1 se queda con la tarjeta grande; cada una de las demas se pinta
+  // debajo CON SU PROPIA BARRA (ver encHtmlRanura).
+  const extras = d.slots || [];
+  const cajaSlots = document.getElementById("enc-slots");
+  if (cajaSlots) {
+    const html = extras.map(encHtmlRanura).join('');
+    if (html !== _encSlotsHtml) { cajaSlots.innerHTML = html; _encSlotsHtml = html; }
+  }
+
+  // EL STOP TIENE QUE ESTAR VIVO SI HAY ALGO CORRIENDO, este en la ranura que
+  // este. Con '!isEnc' a secas, un trabajo que corriera solo en la ranura 2
+  // dejaba el boton deshabilitado y no habia forma de pararlo desde el panel.
+  const algoVivo = isEnc || extras.length > 0;
+  document.getElementById("enc-btn-stop").disabled=!algoVivo;
+  document.getElementById("enc-btn-skip").disabled=!algoVivo;
   document.getElementById("enc-btn-resume").style.display=d.paused?"flex":"none";
   // El checkbox lo pinta el servidor, no el clic: asi dos pestanyas abiertas no
   // se contradicen y sobrevive a recargar.
@@ -231,7 +314,7 @@ function updateEnc(d){
   const qArr=d.queue||[];
   document.getElementById("enc-q-count").textContent=qArr.length;
   const ql=document.getElementById("enc-queue-list");
-  ql.innerHTML=qArr.length
+  const queueHtml=qArr.length
     ?qArr.map((q,i)=>`<div class="list-item">
         <div class="q-actions">
           <button class="q-btn" onclick="encQueueMove('${escJs(q.file)}','up')" ${i===0?'disabled':''}title="Move up">▲</button>
@@ -257,6 +340,7 @@ function updateEnc(d){
                onchange="encSetOpts('${escJs(q.file)}',{target_mbps:this.value},this)">
       </div>`).join("")
     :'<div class="list-item empty-item">Empty</div>';
+  if(queueHtml!==_encQueueHtml){ql.innerHTML=queueHtml;_encQueueHtml=queueHtml;}
 
   document.getElementById("enc-done-count").textContent=(d.done||[]).length;
   const dl=document.getElementById("enc-done-list");
@@ -264,6 +348,7 @@ function updateEnc(d){
     ?d.done.map(item=>{
         // ✓ verde si todo OK; ⚠ ambar si se descartaron subtitulos; · gris si no hay registro
         const dropped=item.subs_dropped||0;
+        const resync=item.subs_resync||[];
         let tick;
         if(dropped>0){
           tick=`<span class="tick-warn" title="${dropped} subtitulo(s) descartado(s) en OCR">⚠</span>`;
@@ -275,7 +360,12 @@ function updateEnc(d){
         const sizeInfo=item.size?`<span class="item-size">${item.size}</span>`:"";
         const redInfo=item.reduction?`<span class="item-size" style="color:var(--green-dim)">${item.reduction}</span>`:"";
         const dropBadge=dropped>0?`<span class="item-badge badge-amber" title="Faltan ${dropped} subs">-${dropped} sub</span>`:"";
-        return`<div class="list-item">${tick}<span class="item-name" title="${esc(item.name)}">${esc(item.name)}</span>${dropBadge}${redInfo}${sizeInfo}</div>`;
+        // Subtitulo nativo corregido antes del mux (verificacion de sync,
+        // 25/09/2026): mismo patron que dropBadge, en azul para no confundirlo
+        // con un aviso. El titulo lista idioma + lo que hizo falta corregir.
+        const resyncTitle=resync.map(r=>`${r.lang}: ${r.informe}`).join(" | ");
+        const resyncBadge=resync.length>0?`<span class="item-badge badge-blue" title="${esc(resyncTitle)}">↻${resync.length} sub</span>`:"";
+        return`<div class="list-item">${tick}<span class="item-name" title="${esc(item.name)}">${esc(item.name)}</span>${dropBadge}${resyncBadge}${redInfo}${sizeInfo}</div>`;
       }).join("")
     :'<div class="list-item empty-item">—</div>';
 
@@ -1288,6 +1378,16 @@ async function rmxMeasure(fi,ix){
   const conVoz    = !!(document.getElementById("rmx-voz-check")||{}).checked;
   const extras = [conPaq?"PAQUETES":null, conSubs?"SUBTÍTULOS":null,
                   conImagen?"IMAGEN":null, conVoz?"LABIOS":null].filter(Boolean);
+  // LO QUE ENCARECE LA IMAGEN (15/09/2026). Los 199 s son 4 puntos con ventana
+  // de búsqueda ±30 s en ficheros que duran lo mismo. Si duran distinto,
+  // measure() ensancha la ventana (dif×1,2+30, tope 300 s) y cada punto
+  // decodifica hasta 3,2× más vídeo; y si los desfases discrepan entre sí
+  // (montajes distintos, que es lo que suele haber detrás de duraciones
+  // distintas) se remide con 16 puntos, ×5. Influencer (2022): 223 s de
+  // diferencia → 20 puntos de 776 s → ~9 min, no 199 s. Se avisa ANTES.
+  const difDur = Math.abs((base.duration||0)-(src.duration||0));
+  const search = difDur > 30 ? Math.min(300, difDur*1.2+30) : 30;
+  const factorVentana = (180 + 2*search) / 240;   // (base 90 + origen 90+2·search) / (90+150)
   const pinta = () => {
     const s = Math.round((Date.now()-t0)/1000);
     const reloj = s<60 ? `${s} s` : `${Math.floor(s/60)} min ${String(s%60).padStart(2,"0")} s`;
@@ -1295,7 +1395,14 @@ async function rmxMeasure(fi,ix){
     if (extras.length) {
       txt += ` — AUDIO + ${extras.join(" + ")} · ${reloj} transcurridos.`;
       if (conSubs)   txt += ` Los subtítulos solo demultiplexan (~46 s en un fichero de 17,6 GB).`;
-      if (conImagen) txt += ` La pasada por imagen decodifica vídeo y es la cara: ~199 s en ese mismo fichero.`;
+      if (conImagen) {
+        txt += ` La pasada por imagen decodifica vídeo y es la cara: ~199 s en ese mismo fichero con 4 puntos y ventana ±30 s.`;
+        if (difDur > 30) {
+          txt += ` AQUÍ los ficheros duran ${Math.round(difDur)} s distinto: la ventana sube a ±${Math.round(search)} s`
+               + ` (×${factorVentana.toFixed(1)} por punto) y, si los desfases no cuadran entre sí, se remide con 16 puntos (×5):`
+               + ` cuenta con ${Math.round(199*factorVentana/60)}-${Math.round(199*factorVentana*5/60)} min para un fichero así.`;
+        }
+      }
       if (conVoz)    txt += ` La de labios decodifica el audio entero del fichero base: 76 s medidos en un 4K de 2 h 12.`;
     } else {
       txt += `... ${reloj}`;

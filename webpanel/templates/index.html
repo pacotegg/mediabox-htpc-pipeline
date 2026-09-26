@@ -72,6 +72,11 @@
     <div class="stat"><div class="stat-label">Bitrate</div><div class="stat-value empty" id="enc-bitrate">—</div></div>
     <div class="stat"><div class="stat-label">Encoded</div><div class="stat-value empty" id="enc-time">—</div></div>
   </div>
+  <!-- Trabajos de las ranuras 2+ (encode.ps1 -Slot), cada uno con SU barra.
+       Va DEBAJO de la tarjeta de la ranura 1 -y no entre su nombre y su
+       barra- para que no haya ninguna duda de que barra es de que pelicula.
+       Vacio mientras el watcher siga con $MaxSlots = 1, que es lo normal hoy. -->
+  <div id="enc-slots" class="enc-slots"></div>
   <div class="controls">
     <button class="btn btn-red" id="enc-btn-stop" disabled onclick="encKill()" title="Mata el encode actual y PAUSA la cola">■ Stop</button>
     <button class="btn btn-amber" id="enc-btn-skip" disabled onclick="encSkip()" title="Mata el encode actual y pasa al siguiente de la cola">▶▶ Skip</button>
