@@ -1259,8 +1259,15 @@ def medir_voz_contra_subs(path, audio_index=None, sub_index=None,
 def measure(base_path, base_index, src_path, src_index,
             points=None, win=90.0, search=30.0, duration=None, mode="audio",
             _sin_reintento=False, _denso=False,
-            permitir=("paquetes", "subs", "video")):
+            permitir=("paquetes", "subs", "video"), intentos=None):
     """Desfase de src respecto a base. Devuelve alpha, beta y los puntos.
+
+    intentos: si se pasa un dict, se escribe en el lo que la escalera automatica
+    haya llegado a medir ('paquetes', 'subs', 'video' -> su resultado), lo haya
+    elegido o no como respuesta. Sirve para que quien llama REUTILICE esas
+    medidas en vez de repetirlas: la pasada por imagen puede costar 10-15 min
+    (ver el bloque de REINTENTO 2), y el panel la volvia a lanzar entera como
+    "segunda opinion" justo despues de que la escalera la hubiera hecho (15/09).
 
     Ventana de busqueda +-`search` s: si el desfase real la excede, el pico cae
     fuera y la medida es basura. Por eso se reporta `pearson` y `nitidez` de cada
@@ -1458,6 +1465,8 @@ def measure(base_path, base_index, src_path, src_index,
         # puede, declina y se sigue bajando la escalera como siempre.
         if "paquetes" in permitir:
             paq = medir_por_paquetes(base_path, src_path)
+            if intentos is not None:
+                intentos["paquetes"] = paq
             if not paq.get("ok"):
                 # Que se intento y por que no salio tiene que llegar al usuario:
                 # si no, un peldano que ha costado leer los dos ficheros enteros
@@ -1477,6 +1486,8 @@ def measure(base_path, base_index, src_path, src_index,
         sub = None
         if "subs" in permitir:
             sub = medir_por_subtitulos(base_path, src_path)
+            if intentos is not None:
+                intentos["subs"] = sub
             if sub.get("ok") and sub.get("escalera"):
                 sub["fallback"] = "subs"
                 sub["fallback_motivo"] = (
@@ -1491,10 +1502,24 @@ def measure(base_path, base_index, src_path, src_index,
 
         vid = {"ok": False}
         if "video" in permitir:
+            # LO QUE CUESTA DE VERDAD (15/09/2026). Los 199 s de arriba son 4
+            # puntos con ventana +-30 s: 4 x (90 + 150) = 960 s de video. Si las
+            # duraciones difieren, 'search' crece (223 s de diferencia -> +-298
+            # s, ventana de origen de 686 s) y si ademas los lags discrepan, el
+            # REINTENTO 3 remide con 16 puntos. Influencer (2022), dos 1080p:
+            # 20 x (90 + 686) = 15.500 s de video a ~29x -> unos 9 min, y en
+            # ese caso el peldano ni siquiera contesto (montajes distintos).
+            # No es contencion (ffmpeg usa 2,5 nucleos con 16 ociosos) ni se
+            # arregla con el decodificador: medido, '-skip_loop_filter all' da
+            # un 10 %, QSV no da nada (el cuello no es decodificar) y '-skip_
+            # frame nokey' es 5x mas rapido pero deja la serie a escalones de
+            # un GOP, que no sirve para correlacionar.
             vid = measure(base_path, base_index, src_path, src_index,
                           points=(None if puntos_automaticos else points),
                           win=win, search=search, duration=duration,
                           mode="video", _sin_reintento=False)
+            if intentos is not None:
+                intentos["video"] = vid
             # La regla de la libreria es pearson Y sharp; aqui se miraba solo el
             # pearson (19/08/2026). La luminancia media de dos copias de la misma
             # pelicula correlaciona alto AUNQUE el pico no localice nada: en El
