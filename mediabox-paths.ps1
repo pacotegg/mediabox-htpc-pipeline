@@ -82,6 +82,12 @@ $MKVMERGE    = 'C:\Program Files\MKVToolNix\mkvmerge.exe'
 $MKVEXTRACT  = 'C:\Program Files\MKVToolNix\mkvextract.exe'
 $MKVPROPEDIT = 'C:\Program Files\MKVToolNix\mkvpropedit.exe'
 
+# Metadatos HDR dinamicos (06/10/2026): quietvoid, releases de GitHub, en
+# C:\scripts\bin como truehdd (bin/ no se versiona). Si faltan, encode.ps1 lo
+# dice en el log y sigue sin reinyectar.
+$HDR10PLUSTOOL = 'C:\scripts\bin\hdr10plus_tool.exe'
+$DOVITOOL      = 'C:\scripts\bin\dovi_tool.exe'
+
 # ffmpeg/ffprobe por ruta ABSOLUTA, con respaldo al nombre suelto por si algun
 # dia cambia la ruta de WinGet. El respaldo NO es un adorno: cuando la llamada
 # principal de encode usaba 'ffmpeg' a secas via Start-Process y el PATH no lo

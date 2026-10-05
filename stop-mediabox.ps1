@@ -222,7 +222,7 @@ foreach ($f in $estado) { Remove-Item -LiteralPath (Join-Path $Tmp $f) -Force -E
 # medicion de sync del panel solo se pueden barrer AQUI, porque esa medicion
 # corre sin lock y el paso 1 ya ha matado al panel.
 if ($PipelineTempPatterns) { $patrones = @($PipelineTempPatterns) + @('_rmx_*') }
-else { $patrones = @('thd_*','damf_*','ddp_*','job_*','dee_*','deetemp_*','deew_*','src_*','a_*','d_*','ocr_*','pgs2srt_*','encode_ff_stderr_*','remux_*','_rmx_*','vid_*','_MEI*') }
+else { $patrones = @('thd_*','damf_*','ddp_*','job_*','dee_*','deetemp_*','deew_*','src_*','a_*','d_*','ocr_*','pgs2srt_*','encode_ff_stderr_*','remux_*','_rmx_*','vid_*','_MEI*','hdrdin_*') }
 $libGb = 0
 foreach ($dir in @($Tmp, $BigTmp | Select-Object -Unique)) {
     if (-not (Test-Path -LiteralPath $dir)) { continue }

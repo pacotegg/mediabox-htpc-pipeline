@@ -493,7 +493,10 @@ function Clear-ProcessedSources {
 $PipelineTempPatterns = @(
     'thd_*','damf_*','ddp_*','job_*','dee_*','deetemp_*','deew_*','src_*',
     'a_*','d_*','ocr_*','pgs2srt_*','encode_ff_stderr_*','remux_*','vid_*',
-    '_MEI*','_recon_*','sf_*','sfsrt_*'
+    '_MEI*','_recon_*','sf_*','sfsrt_*',
+    # 06/10/2026: metadatos HDR10+ (JSON, ~200 MB en una pelicula) y RPU de
+    # Dolby Vision sacados de la fuente para reinyectarlos tras el encode.
+    'hdrdin_*'
 )
 
 function Move-AEnCurso {

@@ -298,9 +298,10 @@ $IcqRedHolgura = 1.03
 #  del UHD original de "El Bueno El Feo Y El Malo" (grano de 35 mm). Medido en
 #  ICQ con los args de produccion: GQ 19 ahorra -12,8 % (nocturno) y -9,5 %
 #  (Sad Hill). El denoise NO era palanca ahi: de 0 a 20 movia el 0,2-0,8 %.
-#  4K: 19 -> 18 el 06/10/2026, a peticion del usuario: Spider-Man No Way Home
+#  4K: 19 -> 18 el 06/10/2026, a peticion del usuario: Spider-Man Brand New Day
 #  (digital, 3832x1600) salio a 5,2 GB con 3,72M de video en GQ 19 y le parecio
-#  poco. -global_quality es entero: no hay 18,5.
+#  poco. -global_quality es entero: no hay 18,5. (La pelicula era en realidad
+#  "Spider-Man: Brand New Day (2026)"; el commit c558097 la llama No Way Home.)
 $CfgGqIcq4K    = 18
 $CfgGqIcq1080p = 15
 # ============================================================================
@@ -3269,8 +3270,106 @@ if ($ExitCode -eq 0 -and (Test-Path -LiteralPath $Output)) {
     if ($NoRebuild) {
         Log "RECONSTRUCCION SALTADA (-NoRebuild). Es una PRUEBA: si esta pelicula da pantalla negra en la TV de 2024, GUARDALA sin borrarla."
     } else {
-        $Reconstruido = Rebuild-Container -File $Output -OnProgress $cbRebuild
+        # --- HDR10+ y Dolby Vision de la FUENTE (06/10/2026) ----------------
+        # hevc_qsv no pasa los metadatos dinamicos: se sacan de la fuente y
+        # Rebuild-Container los inyecta en el video extraido. Solo si la fuente
+        # es HEVC (son SEI/NAL de HEVC), no es SubsOnly (ahi el video va en copy
+        # y ya los conserva) y no hubo reescalado 8K (cambia la geometria).
+        # LA GUARDA QUE IMPORTA: los fotogramas de los metadatos tienen que ser
+        # EXACTAMENTE los de la salida. Si no cuadran, las dos herramientas
+        # recortan en silencio con exit 0 (probado): se inyectaria desalineado.
+        $MetaH10 = ''; $MetaRpu = ''; $HdrDinFuente = @()
+        if (-not $SubsOnly -and -not $Downscale8K -and $SrcCodec -eq 'hevc') {
+            try {
+                $ladosSrc = (& $FFPROBE -v error -select_streams v:0 -read_intervals '%+#5' -show_frames `
+                    -show_entries frame=side_data_list -of compact $InputFile 2>$null) -join "`n"
+                $tieneH10 = $ladosSrc -match 'SMPTE2094-40'
+                $dvPerfil = 0
+                $dvRaw = (& $FFPROBE -v error -select_streams v:0 -show_entries stream_side_data=dv_profile `
+                    -of default=nw=1:nk=1 $InputFile 2>$null) -join ' '
+                if ($dvRaw -match '(\d+)') { $dvPerfil = [int]$Matches[1] }
+                if ($tieneH10 -or $dvPerfil) {
+                    $swMeta = [Diagnostics.Stopwatch]::StartNew()
+                    $nOut = 0L
+                    $null = [long]::TryParse(((& $FFPROBE -v error -select_streams v:0 -count_packets `
+                        -show_entries stream=nb_read_packets -of default=nw=1:nk=1 $Output 2>$null) -join '').Trim(), [ref]$nOut)
+                    if ($tieneH10) {
+                        if (-not (Test-Path -LiteralPath $HDR10PLUSTOOL)) {
+                            Log "  HDR10+: la fuente lo trae pero falta $HDR10PLUSTOOL; se pierde"
+                        } else {
+                            $j = Join-Path $BigTmp "hdrdin_h10p_${TmpTag}.json"
+                            # Tuberia de BYTES entre dos nativos: pwsh 7.4+ (verificado en 7.6).
+                            & $FFMPEG -v error -i $InputFile -map 0:v:0 -c:v copy -bsf:v hevc_mp4toannexb -f hevc - |
+                                & $HDR10PLUSTOOL extract -o $j - 2>&1 | Out-Null
+                            # Fotogramas del JSON sin leerlo entero (~1 KB por fotograma):
+                            # al FINAL va SceneInfoSummary.SceneFrameNumbers, que suman el total.
+                            $nH = -1L
+                            if (Test-Path -LiteralPath $j) {
+                                $fs = [System.IO.File]::OpenRead($j)
+                                try {
+                                    $cola = [Math]::Min($fs.Length, 8MB)
+                                    $null = $fs.Seek(-$cola, [System.IO.SeekOrigin]::End)
+                                    $buf = New-Object byte[] $cola
+                                    $fs.ReadExactly($buf, 0, $cola)
+                                } finally { $fs.Dispose() }
+                                $mm = [regex]::Match([System.Text.Encoding]::UTF8.GetString($buf), '"SceneFrameNumbers"\s*:\s*\[([^\]]*)\]')
+                                if ($mm.Success) {
+                                    $nH = 0L
+                                    foreach ($x in ($mm.Groups[1].Value -split ',')) { if ($x.Trim()) { $nH += [long]$x.Trim() } }
+                                }
+                            }
+                            if ($nH -gt 0 -and $nH -eq $nOut) {
+                                $MetaH10 = $j; $HdrDinFuente += 'HDR10+'
+                            } else {
+                                Log ("  AVISO HDR10+: {0} fotogramas en los metadatos y {1} en la salida; NO se inyecta" -f $nH, $nOut)
+                                Remove-Item -LiteralPath $j -Force -ErrorAction SilentlyContinue
+                            }
+                        }
+                    }
+                    if ($dvPerfil) {
+                        if ($dvPerfil -notin 7, 8) {
+                            Log "  Dolby Vision perfil ${dvPerfil}: no se conserva (solo 7 y 8; el 5 no tiene capa base HDR10)"
+                        } elseif (-not (Test-Path -LiteralPath $DOVITOOL)) {
+                            Log "  Dolby Vision: la fuente lo trae pero falta $DOVITOOL; se pierde"
+                        } else {
+                            $r = Join-Path $BigTmp "hdrdin_rpu_${TmpTag}.bin"
+                            # Perfil 7 (UHD BD, doble capa): modo 2 lo convierte a 8.1.
+                            $modoDv = if ($dvPerfil -eq 7) { @('-m', '2') } else { @() }
+                            & $DOVITOOL @modoDv extract-rpu -i $InputFile -o $r 2>&1 | Out-Null
+                            $nR = -1L
+                            if (Test-Path -LiteralPath $r) {
+                                $infoR = (& $DOVITOOL info -i $r -s 2>&1) -join "`n"
+                                if ($infoR -match 'Frames:\s*(\d+)') { $nR = [long]$Matches[1] }
+                            }
+                            if ($nR -gt 0 -and $nR -eq $nOut) {
+                                $MetaRpu = $r; $HdrDinFuente += "DV$dvPerfil"
+                            } else {
+                                Log ("  AVISO Dolby Vision: {0} fotogramas en el RPU y {1} en la salida; NO se inyecta" -f $nR, $nOut)
+                                Remove-Item -LiteralPath $r -Force -ErrorAction SilentlyContinue
+                            }
+                        }
+                    }
+                    Log ("HDR dinamico de la fuente: {0} ({1} fotogramas, {2:N0} s en extraerlo)" -f `
+                        $(if ($HdrDinFuente.Count) { $HdrDinFuente -join ' + ' } else { 'nada utilizable' }), $nOut, $swMeta.Elapsed.TotalSeconds)
+                }
+            } catch {
+                Log "  aviso: no se pudieron sacar los metadatos HDR dinamicos ($_). Se sigue sin ellos."
+            }
+        }
+        $Reconstruido = Rebuild-Container -File $Output -OnProgress $cbRebuild -Hdr10PlusJson $MetaH10 -DoviRpu $MetaRpu `
+            -Hdr10PlusTool $HDR10PLUSTOOL -DoviTool $DOVITOOL
         if ($Reconstruido) { $outBytes = (Get-Item -LiteralPath $Output).Length }
+        foreach ($m in @($MetaH10, $MetaRpu)) { if ($m) { Remove-Item -LiteralPath $m -Force -ErrorAction SilentlyContinue } }
+    }
+    # Que salio de verdad: se mira en el fichero final, no se da por hecho.
+    $HdrDinSalida = @()
+    if ($HdrDinFuente -and $HdrDinFuente.Count) {
+        $ladosOut = (& $FFPROBE -v error -select_streams v:0 -read_intervals '%+#5' -show_frames `
+            -show_entries frame=side_data_list -of compact $Output 2>$null) -join "`n"
+        if ($ladosOut -match 'SMPTE2094-40') { $HdrDinSalida += 'HDR10+' }
+        if ($ladosOut -match 'Dolby Vision RPU') { $HdrDinSalida += 'DV8.1' }
+        $msgHdr = "HDR dinamico en la salida: {0} (la fuente traia {1})" -f $(if ($HdrDinSalida.Count) { $HdrDinSalida -join ' + ' } else { 'NADA' }), ($HdrDinFuente -join ' + ')
+        if ($HdrDinSalida.Count -lt $HdrDinFuente.Count) { Log "AVISO $msgHdr" } else { Log $msgHdr }
     }
     $sz = FmtSize $outBytes
 
@@ -3447,6 +3546,10 @@ if ($ExitCode -eq 0 -and (Test-Path -LiteralPath $Output)) {
         rate_mode_req = $RateMode
         # 'ok' | 'DESFASE: ...' | 'sin medir' | '' (versiones anteriores al 06/10/2026)
         av_sync      = $AvSync
+        # HDR dinamico (06/10/2026): lo que traia la fuente y lo que lleva la
+        # salida, mirado en el fichero final. Vacios = la fuente no traia nada.
+        hdr_din_fuente = ($(if ($HdrDinFuente) { @($HdrDinFuente) } else { @() }) -join ',')
+        hdr_din_salida = ($(if ($HdrDinSalida) { @($HdrDinSalida) } else { @() }) -join ',')
         ts           = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
     } | ConvertTo-Json -Compress
     Add-Content -LiteralPath (Join-Path $LogDir "completed.jsonl") $rec
@@ -3489,6 +3592,10 @@ if ($ExitCode -eq 0 -and (Test-Path -LiteralPath $Output)) {
         try { $VideoProc.Kill($true) } catch { }
     }
     if ($VidTmp) { Remove-Item -LiteralPath $VidTmp -Force -ErrorAction SilentlyContinue }
+    if ($BigTmp -and $TmpTag) {
+        Remove-Item -LiteralPath (Join-Path $BigTmp "hdrdin_h10p_${TmpTag}.json") -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath (Join-Path $BigTmp "hdrdin_rpu_${TmpTag}.bin") -Force -ErrorAction SilentlyContinue
+    }
     foreach ($s in $SrtInputs)         { Remove-Item -LiteralPath $s.Path -ErrorAction SilentlyContinue }
     foreach ($e in $AtmosEc3.Values)   { Remove-Item -LiteralPath $e      -ErrorAction SilentlyContinue }
 }

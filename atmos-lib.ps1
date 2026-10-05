@@ -2889,7 +2889,16 @@ function Rebuild-Container {
         # clavado ahi los 13,6 min que tarda la fase en una pelicula de 10 GB.
         # Reparto medido en "Oceanos De Fuego": la extraccion se lleva ~70 % del
         # tiempo de la fase y el muxeo el ~30 % restante.
-        [scriptblock]$OnProgress = $null
+        [scriptblock]$OnProgress = $null,
+        # Metadatos HDR dinamicos sacados de la FUENTE (06/10/2026). hevc_qsv no
+        # los pasa al codificar; se reinyectan aqui, sobre el video ya extraido.
+        # Vacios = no se toca nada (el resto de llamadores no los pasan).
+        # Quien llama garantiza que cuadran los fotogramas: las dos herramientas
+        # RECORTAN en silencio (exit 0) si no cuadran.
+        [string]$Hdr10PlusJson = '',
+        [string]$DoviRpu = '',
+        [string]$Hdr10PlusTool = 'C:\scripts\bin\hdr10plus_tool.exe',
+        [string]$DoviTool = 'C:\scripts\bin\dovi_tool.exe'
     )
     <#
       Reconstruye el MKV: extrae cada pista a un fichero suelto y vuelve a
@@ -3185,6 +3194,56 @@ function Rebuild-Container {
             & $MKVEXTRACT $File timestamps_v2 ("{0}:{1}" -f $t.id, $ts) 2>&1 | Out-Null
             if ((Test-Path -LiteralPath $ts) -and ((Get-Item -LiteralPath $ts).Length -gt 0)) {
                 $tsFiles[[int]$t.id] = $ts
+            }
+        }
+
+        # HDR10+ Y DOLBY VISION (06/10/2026). hevc_qsv no tiene forma de pasar
+        # los metadatos dinamicos y se perdian: la fuente de "Spider-Man: Brand
+        # New Day" traia HDR10+ y DV 8.1 y la salida solo HDR10 estatico. Se
+        # inyectan en el video YA EXTRAIDO, antes de muxear: no hay pasada extra
+        # de lectura del fichero entero. mkvmerge escribe solo la configuracion
+        # DOVI del contenedor al ver las NAL de RPU (verificado: 8.6, compatible
+        # HDR10). Orden: HDR10+ primero y luego el RPU, como en la prueba.
+        # Medido en sintetico (90 s de Constantine): el HDR10+ de la salida es
+        # IDENTICO al de la fuente y el RPU tiene el mismo hash.
+        # Fail-safe: si una inyeccion falla se reconstruye SIN ella y se avisa.
+        if ($Hdr10PlusJson -or $DoviRpu) {
+            $vTrk = @($json.tracks | Where-Object { "$($_.type)" -eq 'video' }) | Select-Object -First 1
+            if (-not $vTrk -or "$($vTrk.properties.codec_id)" -ne 'V_MPEGH/ISO/HEVC' -or -not $files.ContainsKey([int]$vTrk.id)) {
+                Log "  HDR10+/DV: el video no es HEVC; no se inyecta nada"
+            } else {
+                $vOrig = $files[[int]$vTrk.id]
+                $vAct  = $vOrig
+                $hechos = @()
+                foreach ($paso in @(
+                    @{ N = 'HDR10+'; M = $Hdr10PlusJson; T = $Hdr10PlusTool; S = 'v_h10p.h265'; A = { param($i, $m, $o) @('inject', '-i', $i, '-j', $m, '-o', $o) } },
+                    @{ N = 'Dolby Vision'; M = $DoviRpu; T = $DoviTool; S = 'v_dovi.h265'; A = { param($i, $m, $o) @('inject-rpu', '-i', $i, '--rpu-in', $m, '-o', $o) } }
+                )) {
+                    if (-not $paso.M) { continue }
+                    try {
+                        if (-not (Test-Path -LiteralPath $paso.T)) { throw "no encuentro $($paso.T)" }
+                        if (-not (Test-Path -LiteralPath $paso.M)) { throw "no encuentro los metadatos $($paso.M)" }
+                        $vSal = Join-Path $work $paso.S
+                        $salida = & $paso.T @(& $paso.A $vAct $paso.M $vSal) 2>&1
+                        $codigo = $LASTEXITCODE
+                        # La salida LLEVA MAS bytes que la entrada (se anyaden NAL):
+                        # un fichero menor o igual es un fallo aunque el exit sea 0.
+                        if ($codigo -ne 0 -or -not (Test-Path -LiteralPath $vSal) -or
+                            (Get-Item -LiteralPath $vSal).Length -le (Get-Item -LiteralPath $vAct).Length) {
+                            throw ("exit {0}: {1}" -f $codigo, ((@($salida) | Select-Object -Last 2) -join ' / '))
+                        }
+                        if ($vAct -ne $vOrig) { Remove-Item -LiteralPath $vAct -Force -ErrorAction SilentlyContinue }
+                        $vAct = $vSal
+                        $hechos += $paso.N
+                    } catch {
+                        Log ("  AVISO: no se pudo inyectar {0} ({1}). Se reconstruye sin el." -f $paso.N, $_)
+                    }
+                }
+                if ($vAct -ne $vOrig) {
+                    Remove-Item -LiteralPath $vOrig -Force -ErrorAction SilentlyContinue
+                    $files[[int]$vTrk.id] = $vAct
+                    Log ("  Metadatos HDR dinamicos inyectados en el video: {0}" -f ($hechos -join ' + '))
+                }
             }
         }
 
