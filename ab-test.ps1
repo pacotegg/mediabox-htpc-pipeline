@@ -161,8 +161,8 @@ function BuildVf([int]$dn, [int]$dt) {
 #   GQ      -> la tabla de $BaseGq (~1818)
 #   filtros -> $Denoise / $Detail  (~1898)
 #   maxrate -> target x1.35 en 4K, x1.30 en 1080p;  bufsize -> maxrate x1.5
-if ($Res -eq '1080p') { $dDn = 7;  $dDt = 6; $dGq = 15; $dRate = '5.0M';  $dMaxR = '6.5M';  $dBufS = '10M' }   # 02/09/2026: 7.5 -> 5.0, siguiendo a encode.ps1 (bajo el 27/08 y el espejo se quedo atras)
-else                  { $dDn = 7;  $dDt = 6; $dGq = 15; $dRate = '9.0M';  $dMaxR = '12.2M'; $dBufS = '18M' }   # 4K: 9.5 -> 9.0 el 21/09/2026, siguiendo a encode.ps1 (maxrate x1.35 = 12.15 -> 12.2 redondeado como hace encode.ps1, bufsize x1.5)
+if ($Res -eq '1080p') { $dDn = 7;  $dDt = 0; $dGq = 15; $dRate = '5.0M';  $dMaxR = '6.5M';  $dBufS = '10M' }   # 02/09/2026: 7.5 -> 5.0, siguiendo a encode.ps1 (bajo el 27/08 y el espejo se quedo atras)
+else                  { $dDn = 7;  $dDt = 0; $dGq = 15; $dRate = '9.0M';  $dMaxR = '12.2M'; $dBufS = '18M' }   # 4K: 9.5 -> 9.0 el 21/09/2026, siguiendo a encode.ps1 (maxrate x1.35 = 12.15 -> 12.2 redondeado como hace encode.ps1, bufsize x1.5)
 $dPreset = 'medium'   # produccion desde el 30/07 en las dos ramas
 if ($Gq -le 0)  { $Gq   = $dGq }
 if (-not $Vf)   { $Vf   = BuildVf $dDn $dDt }

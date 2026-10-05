@@ -61,7 +61,7 @@ param(
     [string]$Rate    = "9.0M",
     [string]$MaxR    = "12.2M",
     [string]$BufS    = "18M",
-    [string]$Vf      = "vpp_qsv=denoise=7:detail=6:format=p010le",
+    [string]$Vf      = "vpp_qsv=denoise=7:detail=0:format=p010le",
     # El MISMO preset en los dos codecs: comparar veryslow contra el default
     # fue justo el error de la primera medida. Y es ademas el de produccion,
     # que en esta GPU da un bitstream casi identico a veryslow (+0,11 % de

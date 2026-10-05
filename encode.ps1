@@ -555,7 +555,7 @@ function Test-Decode([string]$file, [string[]]$extra) {
     # diagnosticarlo obligaba a reproducir el comando a mano.
     $script:LastDecodeError = ""
 
-    $a1 = @('-v','error','-hwaccel','qsv') + $extra + @('-i',$file,'-map','0:v:0','-f','null','NUL')
+    $a1 = @('-v','error','-init_hw_device','qsv=qsv:hw,child_device_type=d3d11va,child_device=0','-hwaccel','qsv') + $extra + @('-i',$file,'-map','0:v:0','-f','null','NUL')
     $o1 = & $FFMPEG @a1 2>&1
     $e1 = $LASTEXITCODE
     if ($e1 -eq 0 -and -not (Get-RealDecodeErrors $o1)) { return $true }
@@ -962,9 +962,18 @@ function TruehdAction([int]$idx) {
 #         (passthrough) del MISMO idioma con >= canales (asi nunca perdemos
 #         canales: no se tira un 5.1 por un 2.0). Las pistas 'und' NUNCA se
 #         descartan y siempre queda >= 1 pista por idioma.
+# Medir inicio del video para calcular el retardo relativo de cada pista de audio
+$vStartStr = Probe "v:0" "stream=start_time" $InputFile
+$vStart = 0.0
+$null = [double]::TryParse($vStartStr, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$vStart)
+
 $AudioPlan = @()
 for ($ai = 0; $ai -lt $AudioCount; $ai++) {
     $codec = (Probe "a:$ai" "stream=codec_name" $InputFile).ToLower()
+    $aStartStr = Probe "a:$ai" "stream=start_time" $InputFile
+    $aStart = 0.0
+    $null = [double]::TryParse($aStartStr, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$aStart)
+    $delaySec = [math]::Round($aStart - $vStart, 3)
     $lang  = Probe "a:$ai" "stream_tags=language" $InputFile; if (-not $lang) { $lang = "und" }
     $chRaw = Probe "a:$ai" "stream=channels" $InputFile
     $ch = 2; if ($chRaw -match '^\d+') { $ch = [int]$Matches[0] }
@@ -1137,6 +1146,7 @@ for ($ai = 0; $ai -lt $AudioCount; $ai++) {
         Title = $atitle; TitleClean = $atitleClean
         IsComment = $isComment; ForceAc = $forceAc
         IsAltMix = $isAltMix; Exempt = ($isComment -or $isAltMix)
+        DelaySec = $delaySec
     }
 }
 
@@ -2088,7 +2098,7 @@ $Gop = if ($Type -eq "Series") { 120 } else { 240 }
 # leyera esto se creeria que 4K y 1080p van por caminos distintos, y no. Si algun
 # dia hace falta separarlas, se separan; hasta entonces, que se vea que no lo estan.
 $Denoise = 7
-$Detail  = 6
+$Detail  = 0
 
 $scaleArgs = "format=p010le"
 if ($Downscale8K) { $scaleArgs = "w=3840:h=2160:format=p010le:scale_mode=hq"; Log "8K input - downscaling to 4K (hq)" }
@@ -2146,6 +2156,10 @@ $BuildAudioMaps = {
     # 1) Registrar los .ec3 como inputs extra (indices estables, antes que los SRT)
     foreach ($p in $AudioPlan) {
         if ($p.Keep -and $p.Action -eq 'ddp' -and $AtmosEc3.ContainsKey($p.Idx)) {
+            if ($p.DelaySec -and [math]::Abs($p.DelaySec) -gt 0.001) {
+                $ExtraInputs += @('-itsoffset', $p.DelaySec.ToString('0.000', [System.Globalization.CultureInfo]::InvariantCulture))
+                Log ("  Audio {0}: compensando retardo en mux DEE: -itsoffset {1:F3}s" -f $p.Idx, $p.DelaySec)
+            }
             $ExtraInputs += @('-i', $AtmosEc3[$p.Idx])
             $AtmosInputMap[$p.Idx] = $inputIdx
             $inputIdx++
@@ -2735,14 +2749,12 @@ $VideoEncArgs = @(
     # CONCLUSION: el encoder HEVC esta agotado como fuente de mejora. Las unicas
     # palancas reales que quedan son el GQ, el par -b:v/-maxrate y vpp_qsv.
     #
-    # ALCANCE: "inerte" significa inerte EN ESTA configuracion, no en el vacio.
-    '-extbrc','1','-look_ahead_depth','60',
-    '-adaptive_i','1','-adaptive_b','1','-b_strategy','1',
-    '-mbbrc','1','-rdo','1',
-    '-scenario','archive',
+    # Flags activos que actuan sobre GOP, referencias y perfil en VDENC:
+    '-b_strategy','1',
     '-bf','3','-refs','4',
     '-profile:v','main10',
-    '-g', "$Gop"
+    '-g', "$Gop",
+    '-forced_idr','1'
 )
 }
 . $BuildVideoEncArgs
@@ -2780,6 +2792,46 @@ $MedirVideoIcq = {
     [math]::Round((($bytes * 8.0 / $Duration) / 1e6) - $audioM, 2)
 }
 
+# SONDEO PREVIO ICQ: detectar de antemano si el grano desbordara el target
+if ($IcqRed -and -not $SubsOnly -and $Duration -gt 300) {
+    try {
+        Log "Sondeo previo de complejidad (2 muestras de 15s)..."
+        $pts = @([int]($Duration * 0.25), [int]($Duration * 0.65))
+        $probeMbList = @()
+        foreach ($ss in $pts) {
+            $prOut = Join-Path $Tmp "probe_${TmpTag}_${ss}.txt"
+            $prArgs = @(
+                '-nostdin', '-y', '-loglevel', 'error',
+                '-ss', "$ss", '-t', '15',
+                '-init_hw_device', 'qsv=qsv:hw,child_device_type=d3d11va,child_device=0',
+                '-hwaccel', 'qsv', '-hwaccel_output_format', 'qsv',
+                '-i', $InputFile, '-map', '0:v:0', '-an', '-sn',
+                '-vf', $Vf, '-c:v', 'hevc_qsv', '-preset', $Preset,
+                '-global_quality', "$Gq", '-b_strategy', '1', '-bf', '3', '-refs', '4',
+                '-profile:v', 'main10', '-g', "$Gop", '-progress', $prOut, '-f', 'null', 'NUL'
+            )
+            & $FFMPEG @prArgs 2>&1 | Out-Null
+            if (Test-Path -LiteralPath $prOut) {
+                $tail = Get-Content -LiteralPath $prOut -Tail 10 -ErrorAction SilentlyContinue
+                $sz = 0; foreach ($l in $tail) { if ($l -match '^total_size=(\d+)') { $sz = [double]$Matches[1] } }
+                if ($sz -gt 0) { $probeMbList += [math]::Round(($sz * 8 / 15) / 1e6, 2) }
+                Remove-Item -LiteralPath $prOut -ErrorAction SilentlyContinue
+            }
+        }
+        if ($probeMbList.Count -eq 2) {
+            $prAvg = [math]::Round(($probeMbList[0] + $probeMbList[1]) / 2.0, 2)
+            Log ("  Sondeo ICQ: muestras {0}M y {1}M (media {2}M contra limite {3}M)" -f `
+                $probeMbList[0], $probeMbList[1], $prAvg, [math]::Round($IcqRedLimite * $IcqRedHolgura, 2))
+            if ($prAvg -gt ($IcqRedLimite * $IcqRedHolgura)) {
+                Log "  El grano supera el limite: se conmuta a 'techo' (QVBR) de antemano (ahorra repetir pasada)."
+                . $PasarATecho $prAvg 0.0
+            }
+        }
+    } catch {
+        Log "  aviso: no se pudo completar el sondeo previo ($_). Se sigue con ICQ normal."
+    }
+}
+
 # El encode de SIEMPRE: video, audio y subtitulos en UNA llamada. Va en un
 # scriptblock invocado con '.' (corre en este ambito) porque ahora hace falta en
 # dos momentos distintos: el camino normal, y la RED del camino solapado cuando
@@ -2787,6 +2839,7 @@ $MedirVideoIcq = {
 $BuildClassicFf = {
     $ff = @(
         '-y',
+        '-init_hw_device','qsv=qsv:hw,child_device_type=d3d11va,child_device=0',
         '-hwaccel','qsv','-hwaccel_output_format','qsv',
         '-i', $InputFile
     ) + $ExtraInputs + @(
@@ -2807,6 +2860,7 @@ if ($ParaleloAV) {
     # identico al camino de siempre.
     $ff = @(
         '-y',
+        '-init_hw_device','qsv=qsv:hw,child_device_type=d3d11va,child_device=0',
         '-hwaccel','qsv','-hwaccel_output_format','qsv',
         '-i', $InputFile,
         '-map','0:v:0'

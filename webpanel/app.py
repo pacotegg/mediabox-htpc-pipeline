@@ -1261,8 +1261,8 @@ def enc_queue_move():
         return jsonify({"ok": False, "error": "No file"})
 
     try:
-        # Lista actual de items reales (sin sidecars .thd), en orden alfabetico
-        items = sorted(f for f in os.listdir(ENC_QUEUE) if not f.endswith(".thd"))
+        # Lista actual de items reales (sin sidecars ni temporales), en orden alfabetico
+        items = _cola_pendientes(ENC_QUEUE)
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
 
@@ -1292,18 +1292,20 @@ def enc_queue_move():
             base = strip_prefix(n)
             tmp = f"__tmp_{i:03d}_{base}"
             os.rename(os.path.join(ENC_QUEUE, n), os.path.join(ENC_QUEUE, tmp))
-            # mover tambien el sidecar .thd si existe
-            thd = os.path.join(ENC_QUEUE, n + ".thd")
-            if os.path.exists(thd):
-                os.rename(thd, os.path.join(ENC_QUEUE, tmp + ".thd"))
+            # mover tambien los sidecars si existen (.opts / .thd)
+            for sfx in (".opts", ".thd"):
+                sc = os.path.join(ENC_QUEUE, n + sfx)
+                if os.path.exists(sc):
+                    os.rename(sc, os.path.join(ENC_QUEUE, tmp + sfx))
             tmp_map.append((tmp, base))
         # Paso 2: del temporal al nombre final NNN_
         for i, (tmp, base) in enumerate(tmp_map):
             final = f"{i:03d}_{base}"
             os.rename(os.path.join(ENC_QUEUE, tmp), os.path.join(ENC_QUEUE, final))
-            thd = os.path.join(ENC_QUEUE, tmp + ".thd")
-            if os.path.exists(thd):
-                os.rename(thd, os.path.join(ENC_QUEUE, final + ".thd"))
+            for sfx in (".opts", ".thd"):
+                sc = os.path.join(ENC_QUEUE, tmp + sfx)
+                if os.path.exists(sc):
+                    os.rename(sc, os.path.join(ENC_QUEUE, final + sfx))
             renamed.append(final)
     except Exception as e:
         return jsonify({"ok": False, "error": f"Rename failed: {e}"})

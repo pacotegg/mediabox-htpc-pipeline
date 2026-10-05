@@ -3245,6 +3245,16 @@ function Rebuild-Container {
                     # un argumento y evita que cualquier acento entre como mojibake.
                     $mkvArgs += @("--sub-charset","0:UTF-8")
                 }
+                if ($t.type -eq "audio" -and $pr.minimum_timestamp) {
+                    $vTrk = @($json.tracks | Where-Object { $_.type -eq 'video' }) | Select-Object -First 1
+                    $vMin = if ($vTrk -and $vTrk.properties.minimum_timestamp) { [double]$vTrk.properties.minimum_timestamp } else { 0.0 }
+                    $aMin = [double]$pr.minimum_timestamp
+                    $dMs  = [int][math]::Round(($aMin - $vMin) / 1000000.0)
+                    if ($dMs -ne 0) {
+                        # --sync va inmediatamente antes del fichero al que se aplica
+                        $mkvArgs += @("--sync", "0:$dMs")
+                    }
+                }
                 # --timestamps va INMEDIATAMENTE antes del fichero al que se
                 # aplica, y el '0' es la pista dentro de ESE fichero (cada uno
                 # trae una sola).
@@ -3371,11 +3381,9 @@ function Rebuild-Container {
             if ($v0 -le 0 -or $v1 -le 0) {
                 throw ("no se puede medir la duracion del video (origen {0}s, reconstruido {1}s): no se sustituye a ciegas" -f $v0, $v1)
             }
-            # TOLERANCIA 3 s, la misma que audio_recap.ps1 y por la misma razon: lo
-            # que se comparan son ETIQUETAS, y tienen un ruido propio de un segundo
-            # largo (medido en 'La soga (1948)': 24 fotogramas de diferencia con el
-            # video MD5-identico). Lo que hay que cazar aqui son MINUTOS.
-            if ([math]::Abs($v0 - $v1) -le 3.0) { break }
+            # Tolerancia ajustada a 0.15 s (150 ms): un desfase mayor desincroniza
+            # el labial perceptiblemente y obliga a conservar los timestamps originales.
+            if ([math]::Abs($v0 - $v1) -le 0.15) { break }
 
             # NO CUADRA. Si aun no lo hemos intentado, se rehace CONSERVANDO los
             # timestamps del origen. No es rendirse: el contenedor se reconstruye

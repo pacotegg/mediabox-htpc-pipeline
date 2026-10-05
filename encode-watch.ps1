@@ -85,8 +85,8 @@ $HoldFile   = Join-Path $Tmp "encode_hold"
 $RunningMinFreeGB   = 100   # por debajo de esto empieza a reclamar espacio
 $RunningMinAgeHours = 2     # y solo con fuentes de mas de N horas
 
-# Mismo host de PowerShell que corre este watcher (pwsh 7 o powershell 5.1)
-$PsExe = (Get-Process -Id $PID).Path
+# pwsh 7 preferente (misma regla que atmos-lib.ps1); fallback al host actual
+$PsExe = if (Test-Path 'C:\Program Files\PowerShell\7\pwsh.exe') { 'C:\Program Files\PowerShell\7\pwsh.exe' } else { (Get-Process -Id $PID).Path }
 
 # ── Single-instance guard ─────────────────────────────────────────
 # Get-OtraInstancia (pipeline-lock.ps1) mira TAMBIEN la linea de comandos: un

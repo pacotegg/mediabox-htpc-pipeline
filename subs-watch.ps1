@@ -53,9 +53,8 @@ if (-not (Test-Path -LiteralPath $LockLib)) { $LockLib = 'C:\scripts\pipeline-lo
 $Encoder = Join-Path $PSScriptRoot 'encode.ps1'
 if (-not (Test-Path -LiteralPath $Encoder)) { $Encoder = 'C:\scripts\encode.ps1' }
 
-# pwsh 7: se reutiliza el MISMO host que corre este script. 'powershell' a secas
-# resolveria a Windows PowerShell 5.1, que no es con lo que se ha probado nada.
-$PsExe = (Get-Process -Id $PID).Path
+# pwsh 7 preferente (misma regla que atmos-lib.ps1); fallback al host actual
+$PsExe = if (Test-Path 'C:\Program Files\PowerShell\7\pwsh.exe') { 'C:\Program Files\PowerShell\7\pwsh.exe' } else { (Get-Process -Id $PID).Path }
 
 $VideoExt = @('.mkv','.mp4','.m2ts','.ts','.mov')
 
