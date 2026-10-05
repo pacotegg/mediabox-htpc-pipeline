@@ -3381,9 +3381,14 @@ function Rebuild-Container {
             if ($v0 -le 0 -or $v1 -le 0) {
                 throw ("no se puede medir la duracion del video (origen {0}s, reconstruido {1}s): no se sustituye a ciegas" -f $v0, $v1)
             }
-            # Tolerancia ajustada a 0.15 s (150 ms): un desfase mayor desincroniza
-            # el labial perceptiblemente y obliga a conservar los timestamps originales.
-            if ([math]::Abs($v0 - $v1) -le 0.15) { break }
+            # TOLERANCIA 3 s, la misma que audio_recap.ps1 y por la misma razon: lo
+            # que se comparan son ETIQUETAS, y tienen un ruido propio de un segundo
+            # largo (medido en 'La soga (1948)': 24 fotogramas de diferencia con el
+            # video MD5-identico). Lo que hay que cazar aqui son MINUTOS.
+            # (05/10/2026: se bajo a 0.15 s pensando en el labial, pero esto mide la
+            # DURACION del video, no el desfase audio/video; con 0.15 un fichero sano
+            # repetia la reconstruccion y podia abortarla. Revertido.)
+            if ([math]::Abs($v0 - $v1) -le 3.0) { break }
 
             # NO CUADRA. Si aun no lo hemos intentado, se rehace CONSERVANDO los
             # timestamps del origen. No es rendirse: el contenedor se reconstruye

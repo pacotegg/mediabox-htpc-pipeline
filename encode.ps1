@@ -962,8 +962,12 @@ function TruehdAction([int]$idx) {
 #         (passthrough) del MISMO idioma con >= canales (asi nunca perdemos
 #         canales: no se tira un 5.1 por un 2.0). Las pistas 'und' NUNCA se
 #         descartan y siempre queda >= 1 pista por idioma.
-# Medir inicio del video para calcular el retardo relativo de cada pista de audio
-$vStartStr = Probe "v:0" "stream=start_time" $InputFile
+# Medir el inicio del FICHERO (no del video) para el retardo de cada pista de
+# audio: sin -copyts, ffmpeg resta al input 0 el start_time del formato (el mas
+# temprano de todas sus pistas). Contra el del video, un audio que empieza ANTES
+# que el video sale con el retardo duplicado (medido 05/10/2026 en sintetico:
+# -0.3 s acababa en -0.6). Contra el del fichero queda igual que una pista copiada.
+$vStartStr = Probe "" "format=start_time" $InputFile
 $vStart = 0.0
 $null = [double]::TryParse($vStartStr, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$vStart)
 
@@ -2750,6 +2754,11 @@ $VideoEncArgs = @(
     # palancas reales que quedan son el GQ, el par -b:v/-maxrate y vpp_qsv.
     #
     # Flags activos que actuan sobre GOP, referencias y perfil en VDENC:
+    # -mbbrc 1 NO es inerte (05/10/2026, 60 s de 4K HDR con Dolby Vision, ICQ GQ 19):
+    # quitarlo engordo el video un 6,3 % (17,68 -> 18,87 MB) por solo +0,00018 de
+    # SSIM. Se habia quitado junto con extbrc/look_ahead/adaptive/rdo/scenario, que
+    # esos SI dieron el mismo tamano al byte. Un clip de una fuente: no es la poblacion.
+    '-mbbrc','1',
     '-b_strategy','1',
     '-bf','3','-refs','4',
     '-profile:v','main10',
@@ -2790,46 +2799,6 @@ $MedirVideoIcq = {
     # que es la misma cuenta que hace el registro de completed.jsonl.
     $bytes = (Get-Item -LiteralPath $fichero).Length
     [math]::Round((($bytes * 8.0 / $Duration) / 1e6) - $audioM, 2)
-}
-
-# SONDEO PREVIO ICQ: detectar de antemano si el grano desbordara el target
-if ($IcqRed -and -not $SubsOnly -and $Duration -gt 300) {
-    try {
-        Log "Sondeo previo de complejidad (2 muestras de 15s)..."
-        $pts = @([int]($Duration * 0.25), [int]($Duration * 0.65))
-        $probeMbList = @()
-        foreach ($ss in $pts) {
-            $prOut = Join-Path $Tmp "probe_${TmpTag}_${ss}.txt"
-            $prArgs = @(
-                '-nostdin', '-y', '-loglevel', 'error',
-                '-ss', "$ss", '-t', '15',
-                '-init_hw_device', 'qsv=qsv:hw,child_device_type=d3d11va,child_device=0',
-                '-hwaccel', 'qsv', '-hwaccel_output_format', 'qsv',
-                '-i', $InputFile, '-map', '0:v:0', '-an', '-sn',
-                '-vf', $Vf, '-c:v', 'hevc_qsv', '-preset', $Preset,
-                '-global_quality', "$Gq", '-b_strategy', '1', '-bf', '3', '-refs', '4',
-                '-profile:v', 'main10', '-g', "$Gop", '-progress', $prOut, '-f', 'null', 'NUL'
-            )
-            & $FFMPEG @prArgs 2>&1 | Out-Null
-            if (Test-Path -LiteralPath $prOut) {
-                $tail = Get-Content -LiteralPath $prOut -Tail 10 -ErrorAction SilentlyContinue
-                $sz = 0; foreach ($l in $tail) { if ($l -match '^total_size=(\d+)') { $sz = [double]$Matches[1] } }
-                if ($sz -gt 0) { $probeMbList += [math]::Round(($sz * 8 / 15) / 1e6, 2) }
-                Remove-Item -LiteralPath $prOut -ErrorAction SilentlyContinue
-            }
-        }
-        if ($probeMbList.Count -eq 2) {
-            $prAvg = [math]::Round(($probeMbList[0] + $probeMbList[1]) / 2.0, 2)
-            Log ("  Sondeo ICQ: muestras {0}M y {1}M (media {2}M contra limite {3}M)" -f `
-                $probeMbList[0], $probeMbList[1], $prAvg, [math]::Round($IcqRedLimite * $IcqRedHolgura, 2))
-            if ($prAvg -gt ($IcqRedLimite * $IcqRedHolgura)) {
-                Log "  El grano supera el limite: se conmuta a 'techo' (QVBR) de antemano (ahorra repetir pasada)."
-                . $PasarATecho $prAvg 0.0
-            }
-        }
-    } catch {
-        Log "  aviso: no se pudo completar el sondeo previo ($_). Se sigue con ICQ normal."
-    }
 }
 
 # El encode de SIEMPRE: video, audio y subtitulos en UNA llamada. Va en un
