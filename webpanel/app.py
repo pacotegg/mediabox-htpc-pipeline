@@ -91,6 +91,17 @@ for _extra in (os.environ.get("MEDIABOX_HOSTS") or "").split(","):
         _HOST_NOMBRES_OK.add(_extra)
 
 
+_RED_TAILSCALE = ipaddress.ip_network("100.64.0.0/10")
+
+
+def _es_ip_segura(ip_str):
+    try:
+        ip = ipaddress.ip_address(ip_str)
+        return ip.is_loopback or ip.is_private or (ip in _RED_TAILSCALE)
+    except ValueError:
+        return False
+
+
 def _host_permitido(host):
     if not host:
         return False
@@ -100,8 +111,8 @@ def _host_permitido(host):
     elif ":" in h:
         h = h.rsplit(":", 1)[0]
     try:
-        ipaddress.ip_address(h)
-        return True          # una IP literal no se puede reapuntar por DNS
+        ip = ipaddress.ip_address(h)
+        return ip.is_loopback or ip.is_private or (ip in _RED_TAILSCALE)
     except ValueError:
         pass
     return h in _HOST_NOMBRES_OK
@@ -109,6 +120,13 @@ def _host_permitido(host):
 
 @app.before_request
 def _guarda_de_entrada():
+    # 0) DE DONDE VIENE la conexion TCP (solo localhost, LAN privada o Tailscale).
+    if request.remote_addr and not _es_ip_segura(request.remote_addr):
+        return jsonify({
+            "ok": False,
+            "error": "Acceso denegado: IP publica no autorizada (%s)." % request.remote_addr
+        }), 403
+
     # 1) DE QUE NOMBRE dicen que vienen (para todo, tambien las lecturas).
     if not _host_permitido(request.host):
         return jsonify({
@@ -116,7 +134,7 @@ def _guarda_de_entrada():
             "error": "Peticion rechazada: este panel no responde al nombre «%s». "
                      "Entra por su IP (p. ej. http://192.168.31.16:8080) o anyade "
                      "el nombre a la variable de entorno MEDIABOX_HOSTS y reinicia "
-                     "el panel. Permitidos ahora: %s, o cualquier IP."
+                     "el panel. Permitidos ahora: %s, o IP local/Tailscale."
                      % (request.host, ", ".join(sorted(_HOST_NOMBRES_OK)))}), 403
 
     # 2) QUE PAGINA la lanza (solo escrituras). Una web ajena SIEMPRE manda
