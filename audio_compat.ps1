@@ -50,7 +50,7 @@ $ErrorActionPreference = 'Continue'
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
 # $FFPROBE, $MKVPROPEDIT los da mediabox-paths.ps1 (31/08/2026: estaban copiados aqui).
-$PsExe       = (Get-Process -Id $PID).Path
+$PsExe       = if (Test-Path -LiteralPath 'C:\Program Files\PowerShell\7\pwsh.exe') { 'C:\Program Files\PowerShell\7\pwsh.exe' } else { (Get-Process -Id $PID).Path }
 $Encoder     = 'C:\scripts\atmosenc\audio_encode.ps1'
 $Done        = 'C:\Media\audio_done'
 

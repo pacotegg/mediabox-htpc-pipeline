@@ -56,8 +56,8 @@ for n, path in enumerate(objetivos, 1):
     res.append({'path': path, 'langs': langs, 'pos_es': pos_es, 'n': len(audio)})
     if n % 500 == 0:
         print(f"   {n}/{len(objetivos)}", flush=True)
-
-json.dump(res, open(SALIDA, 'w', encoding='utf-8'), ensure_ascii=False)
+with open(SALIDA, 'w', encoding='utf-8') as fh:
+    json.dump(res, fh, ensure_ascii=False)
 con_es   = [x for x in res if x['pos_es'] is not None]
 mal      = [x for x in con_es if x['pos_es'] != 0]
 un_audio = [x for x in mal if x['n'] == 1]

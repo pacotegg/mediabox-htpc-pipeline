@@ -29,7 +29,8 @@ def di(msg):
 
 
 def main():
-    open(LOG, 'w', encoding='utf-8').close()
+    with open(LOG, 'w', encoding='utf-8') as _:
+        pass
     objetivos = []
     for raiz in RAICES:
         for dp, _, fs in os.walk(raiz):

@@ -388,7 +388,7 @@ if ($DryRun) {
 # para que Test-LockOwnerAlive pueda descartar un PID reciclado (ver arriba).
 $startTicks = (Get-Process -Id $PID).StartTime.Ticks
 Write-NoBom $FarmPid "$PID`n$startTicks"
-$PsExe = (Get-Process -Id $PID).Path
+$PsExe = if (Test-Path -LiteralPath 'C:\Program Files\PowerShell\7\pwsh.exe') { 'C:\Program Files\PowerShell\7\pwsh.exe' } else { (Get-Process -Id $PID).Path }
 if (-not $PsExe) { $PsExe = 'pwsh.exe' }
 
 if (-not (Enter-PipelineLock $LockFile)) {

@@ -62,7 +62,7 @@ if ($MaxParallel -ne 1) {
 $Base    = 'C:\Media'
 $Done    = Join-Path $Base 'audio_done'
 $Encoder = 'C:\scripts\atmosenc\audio_encode.ps1'
-$PsExe   = (Get-Process -Id $PID).Path
+$PsExe   = if (Test-Path -LiteralPath 'C:\Program Files\PowerShell\7\pwsh.exe') { 'C:\Program Files\PowerShell\7\pwsh.exe' } else { (Get-Process -Id $PID).Path }
 
 foreach ($lib in @('C:\scripts\pipeline-lock.ps1','C:\scripts\atmos-lib.ps1','C:\scripts\mediabox-paths.ps1')) {
     if (Test-Path -LiteralPath $lib) { . $lib } else { Write-Host "ERROR: falta $lib"; exit 1 }

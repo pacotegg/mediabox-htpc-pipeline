@@ -4,6 +4,13 @@ Formato libre por sesión de trabajo (no SemVer: esto es un pipeline casero,
 no una librería versionada). Cada entrada resume el `TRASPASO_*.md`
 correspondiente, que queda en la raíz con el detalle completo.
 
+## 2026-10-05 — Higiene de scripts, unificación de $PsExe y robustez de auditoría
+
+- **Unificación de `$PsExe` (PowerShell 7)**: centralizada la resolución de `$PsExe` en `mediabox-paths.ps1` priorizando la ruta absoluta a `pwsh.exe` frente a `(Get-Process -Id $PID).Path`. Aplicado en `sanear.ps1`, `audio_compat.ps1`, `audio_recap.ps1` y `atmos-farm.ps1` para blindarlos contra caídas accidentales a PS 5.1.
+- **Higiene de disco y repositorio**: eliminados más de 24 MB en volcados huérfanos y backups obsoletos en raíz (`scripts.rar`, sweeps y dumps de agosto) y 9 logs temporales de `WinKlean`.
+- **Auditoría estricta sin pendientes**: 5 bloques `catch` vacíos en `descargas-tanda.ps1`, `jd-lib.ps1` y `tandas-keepalive.ps1` documentados con comentario `#` interno, limpiando las marcas de pendientes en `auditoria-aceptadas.txt`.
+- **Descriptores en Windows y cobertura Python**: `icq_red_informe.py`, `buscar_ass.py`, `buscar_no_nativos.py` y `escanear_orden.py` adaptados a bloques `with open(...)` para evitar retención de handles. `auditar-python.py` ampliado para cubrir los 10 scripts Python del proyecto.
+
 ## 2026-09-21 — Perfil 'icq-red': ICQ con red a posteriori (la única "mezcla" ICQ/QVBR posible)
 
 - **Target 4K 9,5/9,0 → 9,0/8,5 y suelo 4K 8,5 → 8,0** (noche, a petición

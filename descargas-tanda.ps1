@@ -452,7 +452,8 @@ $RaizDescargas = 'C:\Users\HTPC\Downloads'
 try {
     $gs = Get-Content -LiteralPath 'C:\Users\HTPC\AppData\Local\JDownloader 2\cfg\org.jdownloader.settings.GeneralSettings.json' -Raw | ConvertFrom-Json
     if ($gs.defaultdownloadfolder) { $RaizDescargas = [string]$gs.defaultdownloadfolder }
-} catch { }
+} catch { # si la config de JD no se puede leer, conserva la ruta por defecto Downloads
+}
 
 $ExtVideo = @('.mkv','.mp4','.m2ts','.ts','.avi','.mov','.m4v')
 # Restos que significan "la extraccion no ha terminado". Si siguen ahi cuando
@@ -501,7 +502,8 @@ function Write-Log {
     param([Parameter(Mandatory)][string]$Texto)
     $linea = '{0}  {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Texto
     Write-Host $linea
-    try { Add-Content -LiteralPath $LogFile -Value $linea -Encoding utf8 } catch { }
+    try { Add-Content -LiteralPath $LogFile -Value $linea -Encoding utf8 } catch { # no bloquear ejecucion si el log esta bloqueado
+    }
 }
 
 function Get-GbDescargadasHoy {
@@ -831,7 +833,9 @@ function Test-FicheroLibre {
         $fs = [System.IO.File]::Open($Ruta, 'Open', 'Read', 'None')
         $fs.Close(); $fs.Dispose()
         return $true
-    } catch { return $false }
+    } catch { # fichero bloqueado por otro proceso
+        return $false
+    }
 }
 
 function Get-DuracionSeg {
@@ -1379,7 +1383,9 @@ function Get-TmmIndiceDataSource {
 
     try {
         $cfg = Get-Content -LiteralPath $archivo -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-    } catch { return 0 }
+    } catch { # json de tmm no existe o esta corrupto
+        return 0
+    }
 
     # OJO al nombre: NO puede llamarse $ruta. PowerShell no distingue
     # mayusculas en los nombres de variable, asi que $ruta y el parametro
@@ -2845,7 +2851,8 @@ while (-not $fin) {
                 colocadas = @($colocadas | ForEach-Object { Split-Path $_ -Leaf })
                 libre_gb = $libreFin }
         Add-Content -LiteralPath $HistFile -Value ($h | ConvertTo-Json -Depth 5 -Compress) -Encoding utf8
-    } catch { }
+    } catch { # fallo no critico al escribir el historial de tandas
+    }
 
     if ($UnaTanda) { Write-Log 'Pedida una sola tanda (-UnaTanda). Fin.'; $fin = $true }
 }

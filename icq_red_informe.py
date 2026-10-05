@@ -18,21 +18,24 @@ JSONL = os.path.join(LOGS, "completed.jsonl")
 
 def leer_jsonl(desde_ts):
     filas = []
-    for l in open(JSONL, encoding="utf-8", errors="replace"):
-        l = l.strip()
-        if not l:
-            continue
-        try:
-            r = json.loads(l)
-        except Exception:
-            continue
-        if r.get("mode") != "encode" or (r.get("ts") or 0) < desde_ts:
-            continue
-        if "prueba" in str(r.get("source", "")).lower():
-            continue
-        if not r.get("icq_red"):
-            continue
-        filas.append(r)
+    if not os.path.exists(JSONL):
+        return filas
+    with open(JSONL, encoding="utf-8", errors="replace") as f:
+        for l in f:
+            l = l.strip()
+            if not l:
+                continue
+            try:
+                r = json.loads(l)
+            except Exception:
+                continue
+            if r.get("mode") != "encode" or (r.get("ts") or 0) < desde_ts:
+                continue
+            if "prueba" in str(r.get("source", "")).lower():
+                continue
+            if not r.get("icq_red"):
+                continue
+            filas.append(r)
     return filas
 
 def hitos_de(nombre_salida, ts):
@@ -58,13 +61,14 @@ def hitos_de(nombre_salida, ts):
     log = max(cands)[1]
     hitos = {}
     aborto = None
-    for l in open(log, encoding="utf-8", errors="replace"):
-        m = re.search(r"RED ICQ: hito (\d+) %: media ([\d.]+)M \(limite ([\d.]+)M, x([\d.]+)\), CV del bitrate por tramos (\d+) %", l)
-        if m:
-            hitos[int(m.group(1))] = dict(media=float(m.group(2)), limite=float(m.group(3)), ratio=float(m.group(4)), cv=int(m.group(5)))
-        m = re.search(r"ABORTO TEMPRANO al (\d+) % del metraje: media ([\d.]+)M", l)
-        if m:
-            aborto = (int(m.group(1)), float(m.group(2)))
+    with open(log, encoding="utf-8", errors="replace") as f:
+        for l in f:
+            m = re.search(r"RED ICQ: hito (\d+) %: media ([\d.]+)M \(limite ([\d.]+)M, x([\d.]+)\), CV del bitrate por tramos (\d+) %", l)
+            if m:
+                hitos[int(m.group(1))] = dict(media=float(m.group(2)), limite=float(m.group(3)), ratio=float(m.group(4)), cv=int(m.group(5)))
+            m = re.search(r"ABORTO TEMPRANO al (\d+) % del metraje: media ([\d.]+)M", l)
+            if m:
+                aborto = (int(m.group(1)), float(m.group(2)))
     return hitos, aborto
 
 def main():

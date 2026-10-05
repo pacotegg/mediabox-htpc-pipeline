@@ -74,7 +74,8 @@ $LockLib = 'C:\scripts\pipeline-lock.ps1'
 function Apunta([string]$txt) {
     $linea = "{0}  [keepalive] {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $txt
     Write-Host $linea
-    try { Add-Content -LiteralPath $Log -Value $linea -Encoding utf8 } catch { }
+    try { Add-Content -LiteralPath $Log -Value $linea -Encoding utf8 } catch { # no bloquear ejecucion si el log esta bloqueado
+    }
 }
 
 # --- Hay algo que vigilar? -------------------------------------------------

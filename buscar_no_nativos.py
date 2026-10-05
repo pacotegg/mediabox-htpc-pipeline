@@ -52,8 +52,8 @@ for n, path in enumerate(objetivos, 1):
 print(f"\n  pistas NO nativas: {len(malos)}  en {len({m[0] for m in malos})} ficheros")
 for f, n in cuenta.most_common():
     print(f"     {n:5d}  {f}")
-json.dump([{'path': p, 'fmt': f, 'lang': l} for p, f, l in malos],
-          open(r'C:\scripts\no_nativos.json', 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
+with open(r'C:\scripts\no_nativos.json', 'w', encoding='utf-8') as fh:
+    json.dump([{'path': p, 'fmt': f, 'lang': l} for p, f, l in malos], fh, ensure_ascii=False, indent=1)
 print("\n  ejemplos:")
 for p, f, l in malos[:10]:
     print(f"     [{f:10s}] {os.path.basename(p)[:56]}")

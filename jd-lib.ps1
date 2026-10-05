@@ -52,7 +52,8 @@ $JdApiPuerto = 3128
 try {
     $cfgApi = Get-Content -LiteralPath $JdCfgRemoteApi -Raw | ConvertFrom-Json
     if ($cfgApi.deprecatedapiport) { $JdApiPuerto = [int]$cfgApi.deprecatedapiport }
-} catch { }
+} catch { # si la config de JD no se puede leer, conserva el puerto por defecto 3128
+}
 $JdApiBase = "http://127.0.0.1:$JdApiPuerto"
 
 # 'auto' hasta que Invoke-JdApi averigue cual de las dos formas traga esta

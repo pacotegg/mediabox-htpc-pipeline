@@ -91,3 +91,8 @@ $FFMPEG  = 'C:\Users\HTPC\AppData\Local\Microsoft\WinGet\Links\ffmpeg.exe'
 if (-not (Test-Path -LiteralPath $FFMPEG))  { $FFMPEG  = 'ffmpeg' }
 $FFPROBE = 'C:\Users\HTPC\AppData\Local\Microsoft\WinGet\Links\ffprobe.exe'
 if (-not (Test-Path -LiteralPath $FFPROBE)) { $FFPROBE = 'ffprobe' }
+
+# PowerShell 7: priorizar ruta absoluta a pwsh.exe para evitar arranques accidentales bajo PS 5.1
+if ($env:PWSH_EXE -and (Test-Path -LiteralPath $env:PWSH_EXE)) { $PsExe = $env:PWSH_EXE }
+elseif (Test-Path -LiteralPath 'C:\Program Files\PowerShell\7\pwsh.exe') { $PsExe = 'C:\Program Files\PowerShell\7\pwsh.exe' }
+else { $PsExe = (Get-Process -Id $PID).Path }
