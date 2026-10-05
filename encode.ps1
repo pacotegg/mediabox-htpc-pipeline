@@ -298,7 +298,10 @@ $IcqRedHolgura = 1.03
 #  del UHD original de "El Bueno El Feo Y El Malo" (grano de 35 mm). Medido en
 #  ICQ con los args de produccion: GQ 19 ahorra -12,8 % (nocturno) y -9,5 %
 #  (Sad Hill). El denoise NO era palanca ahi: de 0 a 20 movia el 0,2-0,8 %.
-$CfgGqIcq4K    = 19
+#  4K: 19 -> 18 el 06/10/2026, a peticion del usuario: Spider-Man No Way Home
+#  (digital, 3832x1600) salio a 5,2 GB con 3,72M de video en GQ 19 y le parecio
+#  poco. -global_quality es entero: no hay 18,5.
+$CfgGqIcq4K    = 18
 $CfgGqIcq1080p = 15
 # ============================================================================
 
@@ -3312,6 +3315,60 @@ if ($ExitCode -eq 0 -and (Test-Path -LiteralPath $Output)) {
     } else {
         Log "AVISO: no encuentro mkvpropedit en $MKVPROPEDIT - los tags de estadisticas quedan los del origen"
     }
+    # --- Desfase audio/video: fuente contra salida (06/10/2026) -----------
+    # Hasta el 05/10/2026 la reconstruccion del contenedor TIRABA el retardo del
+    # audio y las peliculas entraban bien y salian desincronizadas sin que nada
+    # avisara. Aqui se compara, por idioma, el inicio de cada audio respecto al
+    # video en la fuente y en la salida. Un retardo NEGATIVO (audio antes que el
+    # video) debe salir como 0: el --sync de la reconstruccion recorta ese trozo
+    # de audio, que no tiene imagen debajo (medido en sintetico el 05/10/2026).
+    # Tolerancia 0.05 s: un frame de AC3/E-AC3 son 32 ms.
+    # Solo AVISA (log + av_sync en completed.jsonl): no toca la salida.
+    $AvSync = ''
+    try {
+        $inv = [System.Globalization.CultureInfo]::InvariantCulture
+        $numStyle = [System.Globalization.NumberStyles]::Float
+        $leerAudios = {
+            param($f)
+            $v0 = 0.0; $null = [double]::TryParse((Probe "v:0" "stream=start_time" $f), $numStyle, $inv, [ref]$v0)
+            $lista = @()
+            foreach ($ln in ((Probe "a" "stream=start_time:stream_tags=language" $f) -split "`r?`n")) {
+                $p = $ln.Trim().Split(',')
+                if ($p.Count -lt 1 -or -not $p[0]) { continue }
+                $s = 0.0
+                if (-not [double]::TryParse($p[0], $numStyle, $inv, [ref]$s)) { continue }
+                $lg = if ($p.Count -gt 1 -and $p[1]) { $p[1].ToLower() } else { 'und' }
+                $lista += [pscustomobject]@{ Lang = $lg; Off = [math]::Round($s - $v0, 3) }
+            }
+            , $lista
+        }
+        $srcA = & $leerAudios $InputFile
+        $outA = & $leerAudios $Output
+        if ($srcA.Count -eq 0 -or $outA.Count -eq 0) {
+            $AvSync = 'sin medir'
+        } else {
+            $malas = @()
+            foreach ($o in $outA) {
+                $cand = @($srcA | Where-Object { $_.Lang -eq $o.Lang })
+                if ($cand.Count -eq 0) { $cand = $srcA }
+                $mejor = ($cand | ForEach-Object { [math]::Abs([math]::Max($_.Off, 0.0) - $o.Off) } | Measure-Object -Minimum).Minimum
+                if ($mejor -gt 0.05) {
+                    $malas += ("{0}: salida {1}s, fuente {2}" -f $o.Lang, $o.Off.ToString('+0.000;-0.000', $inv), (($cand | ForEach-Object { $_.Off.ToString('+0.000;-0.000', $inv) }) -join '/'))
+                }
+            }
+            if ($malas.Count -eq 0) {
+                $AvSync = 'ok'
+                Log ("Sync A/V: ok ({0} pista(s) de audio; retardos de la fuente: {1})" -f $outA.Count, (($srcA | ForEach-Object { $_.Off.ToString('+0.000;-0.000', $inv) }) -join ' '))
+            } else {
+                $AvSync = 'DESFASE: ' + ($malas -join '; ')
+                Log "AVISO Sync A/V: $AvSync"
+            }
+        }
+    } catch {
+        $AvSync = 'sin medir'
+        Log "  aviso: no se pudo comprobar el desfase A/V ($_)"
+    }
+
     # --- Registro para completed.jsonl -----------------------------------
     # Antes solo guardaba output/source/size/subs_dropped/ts, y con eso era
     # IMPOSIBLE responder a lo unico que importa para afinar: si el encode lo
@@ -3388,6 +3445,8 @@ if ($ExitCode -eq 0 -and (Test-Path -LiteralPath $Output)) {
         # de ICQ), y sin este campo no se puede saber despues si una pelicula
         # rara se encodeo asi porque lo pediste tu o porque lo decidio el perfil.
         rate_mode_req = $RateMode
+        # 'ok' | 'DESFASE: ...' | 'sin medir' | '' (versiones anteriores al 06/10/2026)
+        av_sync      = $AvSync
         ts           = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
     } | ConvertTo-Json -Compress
     Add-Content -LiteralPath (Join-Path $LogDir "completed.jsonl") $rec
