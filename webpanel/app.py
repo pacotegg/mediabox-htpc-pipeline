@@ -590,6 +590,15 @@ def _tail_log(carpeta, n=40):
 # limitado a C: -acepta cualquier ruta-, simplemente no habia por donde subir.
 DRIVES_ROOT = "::unidades"
 
+def _sin_ext_de_video(item):
+    """Un fichero de mas de 50 MB cuya extension no es de video: puede ser una
+    pelicula bajada sin extension ('Pelicula.2009.1080p' da '.1080p').
+    enc_encolar le pone la extension buena tras preguntar a ffprobe."""
+    try:
+        return item.is_file() and item.stat().st_size > 50 * 1024 * 1024
+    except OSError:
+        return False
+
 @app.route("/api/browse", methods=["POST"])
 def browse():
     data = request.get_json(silent=True) or {}
@@ -624,7 +633,7 @@ def browse():
             if item.name.startswith("."): continue
             if item.is_dir():
                 entries.append({"name": item.name, "path": item.path, "type": "dir", "size": ""})
-            elif os.path.splitext(item.name)[1].lower() in VIDEO_EXTS:
+            elif os.path.splitext(item.name)[1].lower() in VIDEO_EXTS or _sin_ext_de_video(item):
                 try:    size_str = fmt_size(item.stat().st_size)
                 except: size_str = ""
                 entries.append({"name": item.name, "path": item.path, "type": "file", "size": size_str})
@@ -1295,6 +1304,135 @@ def enc_build_payload():
 @app.route("/api/enc/status")
 def enc_status():
     return jsonify(enc_build_payload())
+
+@app.route("/api/enc/encolar", methods=["POST"])
+def enc_encolar():
+    ruta = str((request.get_json(silent=True) or {}).get("path") or "").strip()
+    if not _ruta_permitida(ruta):
+        return _rechazo_ruta(ruta)
+    if not os.path.isfile(ruta):
+        return jsonify({"ok": False, "error": "No es un fichero"}), 400
+    nombre = os.path.basename(ruta)
+    if os.path.splitdrive(ruta)[0].lower() != os.path.splitdrive(ENC_QUEUE)[0].lower():
+        return jsonify({"ok": False, "error": "Solo se mueve dentro del mismo disco"}), 400
+    # Sin extension de video (descargas que llegan sin ella): ffprobe dice que es.
+    if os.path.splitext(nombre)[1].lower() not in VIDEO_EXTS:
+        r = subprocess.run([FFPROBE, "-v", "error", "-show_entries", "format=format_name",
+                            "-of", "csv=p=0", ruta], capture_output=True, text=True,
+                           timeout=60, creationflags=_NO_WINDOW)
+        fmt = r.stdout.strip().strip('"').split(",")[0]
+        nueva = {"matroska": ".mkv", "mov": ".mp4", "avi": ".avi", "mpegts": ".ts"}.get(fmt)
+        if not nueva:
+            return jsonify({"ok": False, "error": "No parece un video (%s)" % (fmt or "ffprobe no lo reconoce")}), 400
+        nombre += nueva
+    os.makedirs(ENC_QUEUE, exist_ok=True)
+    final = os.path.join(ENC_QUEUE, nombre)
+    if os.path.exists(final):
+        return jsonify({"ok": False, "error": "ya hay un «%s» en esa cola" % nombre}), 409
+    os.replace(ruta, final)
+    return jsonify({"ok": True, "queued": nombre})
+
+
+@app.route("/api/enc/borrar-original", methods=["POST"])
+def enc_borrar_original():
+    data = request.get_json(silent=True) or {}
+    nombre = os.path.basename(str(data.get("name") or ""))
+    if data.get("confirmar") is not True or not nombre:
+        return jsonify({"ok": False, "error": "Falta confirmacion"}), 400
+    origen = str((enc_load_history().get(nombre) or {}).get("source") or "")
+    if not _ruta_permitida(origen):
+        return _rechazo_ruta(origen)
+    if not os.path.isfile(origen):
+        return jsonify({"ok": False, "error": "El original ya no existe"}), 404
+    base = os.path.basename(origen)
+    if any(x == base or re.sub(r"^\d{3}_", "", x) == base for x in _cola_pendientes(ENC_QUEUE)):
+        return jsonify({"ok": False, "error": "Ese fichero sigue en cola"}), 409
+    for marca in glob.glob(os.path.join(TMP, "*_outfile")):
+        try:
+            with open(marca, encoding="utf-8", errors="replace") as fh:
+                salida = fh.read().strip()
+        except OSError:
+            continue
+        if os.path.basename(salida).lower() == nombre.lower():
+            return jsonify({"ok": False, "error": "Esa salida se esta escribiendo ahora mismo"}), 409
+    r = subprocess.run(
+        [PWSH, "-NoProfile", "-Command",
+         "Add-Type -AssemblyName Microsoft.VisualBasic; "
+         "[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($env:MB_BORRAR, "
+         "[Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs, "
+         "[Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin)"],
+        capture_output=True, text=True, timeout=60, creationflags=_NO_WINDOW,
+        env=dict(os.environ, MB_BORRAR=origen))
+    if r.returncode != 0 or os.path.exists(origen):
+        return jsonify({"ok": False,
+                        "error": "No se pudo mandar a la Papelera: " + r.stderr.strip()[:300]}), 500
+    return jsonify({"ok": True})
+
+
+@app.route("/api/enc/borrar-salida", methods=["POST"])
+def enc_borrar_salida():
+    """La salida codificada de un terminado, a la Papelera. Para la app del movil.
+    Una salida que aun se esta escribiendo tambien sale en 'done' (con 0 KB):
+    el marcador *_outfile es lo que la protege."""
+    data = request.get_json(silent=True) or {}
+    nombre = os.path.basename(str(data.get("name") or ""))
+    if data.get("confirmar") is not True or not nombre:
+        return jsonify({"ok": False, "error": "Falta confirmacion"}), 400
+    ruta = os.path.join(DONE_DIR, nombre)
+    if not _ruta_permitida(ruta):
+        return _rechazo_ruta(ruta)
+    if not os.path.isfile(ruta):
+        return jsonify({"ok": False, "error": "Esa salida ya no existe"}), 404
+    for marca in glob.glob(os.path.join(TMP, "*_outfile")):
+        try:
+            with open(marca, encoding="utf-8", errors="replace") as fh:
+                salida = fh.read().strip()
+        except OSError:
+            continue
+        if os.path.basename(salida).lower() == nombre.lower():
+            return jsonify({"ok": False, "error": "Esa salida se esta escribiendo ahora mismo"}), 409
+    r = subprocess.run(
+        [PWSH, "-NoProfile", "-Command",
+         "Add-Type -AssemblyName Microsoft.VisualBasic; "
+         "[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($env:MB_BORRAR, "
+         "[Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs, "
+         "[Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin)"],
+        capture_output=True, text=True, timeout=60, creationflags=_NO_WINDOW,
+        env=dict(os.environ, MB_BORRAR=ruta))
+    if r.returncode != 0 or os.path.exists(ruta):
+        return jsonify({"ok": False,
+                        "error": "No se pudo mandar a la Papelera: " + r.stderr.strip()[:300]}), 500
+    return jsonify({"ok": True})
+
+
+@app.route("/api/papelera")
+def papelera_estado():
+    """Cuantos elementos hay en la Papelera del usuario del panel y cuanto ocupan."""
+    r = subprocess.run(
+        [PWSH, "-NoProfile", "-Command",
+         "$i = (New-Object -ComObject Shell.Application).Namespace(10).Items(); "
+         "$b = 0; foreach ($x in $i) { $b += [int64]$x.ExtendedProperty('Size') }; "
+         "\"$($i.Count) $b\""],
+        capture_output=True, text=True, timeout=60, creationflags=_NO_WINDOW)
+    partes = r.stdout.split()
+    if r.returncode != 0 or len(partes) != 2 or not all(p.isdigit() for p in partes):
+        return jsonify({"ok": False, "error": "No se pudo leer la Papelera: " + r.stderr.strip()[:300]}), 500
+    return jsonify({"ok": True, "n": int(partes[0]), "size": fmt_size(int(partes[1]))})
+
+
+@app.route("/api/papelera/vaciar", methods=["POST"])
+def papelera_vaciar():
+    """Vacia la Papelera (todas las unidades). Borrado DEFINITIVO: solo a peticion
+    expresa del usuario y con confirmar=true; nada lo llama automaticamente."""
+    if (request.get_json(silent=True) or {}).get("confirmar") is not True:
+        return jsonify({"ok": False, "error": "Falta confirmacion"}), 400
+    r = subprocess.run(
+        [PWSH, "-NoProfile", "-Command", "Clear-RecycleBin -Force -ErrorAction Stop"],
+        capture_output=True, text=True, timeout=120, creationflags=_NO_WINDOW)
+    if r.returncode != 0:
+        return jsonify({"ok": False, "error": "No se pudo vaciar: " + r.stderr.strip()[:300]}), 500
+    return jsonify({"ok": True})
+
 
 def _kill_pid(pid):
     """Mata un proceso y TODO su arbol en Windows. os.kill(SIGTERM) no vale para
