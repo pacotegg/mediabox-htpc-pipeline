@@ -63,6 +63,16 @@ PWSH      = r"C:\Program Files\PowerShell\7\pwsh.exe"
 SUBS_LIB  = r"C:\scripts\subs-lib.ps1"
 
 
+TOPE_RED = 20 * 1024 * 1024  # ni una respuesta de API ni un subtitulo pesa mas
+
+
+def _leer_acotado(resp, tope=TOPE_RED):
+    datos = resp.read(tope + 1)
+    if len(datos) > tope:
+        raise ValueError("respuesta mayor de %d MB" % (tope // (1024 * 1024)))
+    return datos
+
+
 def _ps_q(x):
     """Comilla simple de PowerShell: dentro de '...' solo hay que doblar la '.
 
@@ -80,7 +90,10 @@ def _ps_q(x):
     Misma funcion que _ps_q de app.py. Aqui no se importa porque la dependencia
     va al reves (app.py importa subsfetch), y son dos lineas.
     """
-    return str(x).replace("'", "''")
+    out = str(x).replace("'", "''")
+    for c in "‘’‚‛":
+        out = out.replace(c, "'+[char]0x%04X+'" % ord(c))
+    return out
 # Donde buscar otras copias de la misma pelicula. Ver unidades-htpc-reparto.
 BIBLIOTECAS = [r"E:\Peliculas", r"F:\Peliculas"]
 
@@ -237,8 +250,8 @@ def _extraer_voz(video, idx_audio):
         mezcla = "pan=mono|c0=0.5*c0+0.5*c1"
     else:
         mezcla = "pan=mono|c0=c0"
-    wav = os.path.join(tempfile.gettempdir(),
-                       f"_sf_{os.getpid()}_{idx_audio}.wav")
+    fd, wav = tempfile.mkstemp(prefix="_sf_", suffix=".wav")
+    os.close(fd)
     try:
         subprocess.run([FFMPEG, "-v", "error", "-y", "-i", video,
                         # c2 por INDICE y no 'FC' por nombre (03/09/2026):
@@ -613,10 +626,10 @@ class OpenSubs:
         req = urllib.request.Request(url, data=cuerpo, headers=cab)
         try:
             with urllib.request.urlopen(req, timeout=60) as r:
-                return r.status, json.loads(r.read().decode())
+                return r.status, json.loads(_leer_acotado(r).decode())
         except urllib.error.HTTPError as e:
             try:
-                return e.code, json.loads(e.read().decode())
+                return e.code, json.loads(_leer_acotado(e).decode())
             except Exception:
                 return e.code, {}
         except Exception as e:
@@ -660,7 +673,7 @@ class OpenSubs:
             req = urllib.request.Request(
                 b["link"], headers={"User-Agent": self.cfg.get("user_agent", "MediaBox/1.0")})
             with urllib.request.urlopen(req, timeout=120) as r:
-                datos = r.read()
+                datos = _leer_acotado(r)
         except Exception as e:
             return None, f"no se pudo bajar: {e}"
         # Puede venir en zip
@@ -668,6 +681,8 @@ class OpenSubs:
             try:
                 z = zipfile.ZipFile(io.BytesIO(datos))
                 nom = next(n for n in z.namelist() if n.lower().endswith(".srt"))
+                if z.getinfo(nom).file_size > TOPE_RED:
+                    return None, "subtitulo dentro del zip demasiado grande"
                 datos = z.read(nom)
             except Exception as e:
                 return None, f"zip ilegible: {e}"
@@ -978,7 +993,7 @@ class SubSource:
             "User-Agent": self.agente})
         try:
             with urllib.request.urlopen(req, timeout=60) as r:
-                datos = r.read()
+                datos = _leer_acotado(r)
                 if crudo:
                     return r.status, datos
                 return r.status, json.loads(datos.decode("utf-8", "replace"))
@@ -1073,6 +1088,8 @@ def _srt_del_zip(datos, temporada, episodio):
         elegido = buenos[0]
     else:
         elegido = max(srts, key=lambda n: z.getinfo(n).file_size)
+    if z.getinfo(elegido).file_size > TOPE_RED:
+        return None
     crudo = z.read(elegido)
     for enc in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
         try:

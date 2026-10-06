@@ -133,7 +133,7 @@ async function browseTo(path){
       </div>`;
     }).join("");
   }catch(e){
-    document.getElementById("browser-body").innerHTML=`<div class="browser-loading" style="color:var(--red)">Error: ${e}</div>`;
+    document.getElementById("browser-body").innerHTML=`<div class="browser-loading" data-style="color:var(--red)">Error: ${e}</div>`;
   }
 }
 function browserSelect(path){
@@ -212,7 +212,7 @@ function encHtmlRanura(s){
            '</div>'+
            '<div class="progress-row slot-row">'+
            '<div class="pct-label">'+(pct>0?pct.toFixed(1)+'%':'...')+'</div>'+
-             '<div class="bar-wrap"><div class="bar-fill bar-green" style="'+estilo+'"></div></div>'+
+             '<div class="bar-wrap"><div class="bar-fill bar-green" data-style="'+estilo+'"></div></div>'+
              '<div class="eta-label">'+der+'</div>'+
            '</div>'+
            '<div class="stats-row">'+
@@ -356,7 +356,7 @@ function updateEnc(d){
           tick=`<span class="tick-unk">·</span>`;
         }
         const sizeInfo=item.size?`<span class="item-size">${item.size}</span>`:"";
-        const redInfo=item.reduction?`<span class="item-size" style="color:var(--green-dim)">${item.reduction}</span>`:"";
+        const redInfo=item.reduction?`<span class="item-size" data-style="color:var(--green-dim)">${item.reduction}</span>`:"";
         const dropBadge=dropped>0?`<span class="item-badge badge-amber" title="Faltan ${dropped} subs">-${dropped} sub</span>`:"";
         // Subtitulo nativo corregido antes del mux (verificacion de sync,
         // 25/09/2026): mismo patron que dropBadge, en azul para no confundirlo
@@ -796,14 +796,14 @@ async function subsFetchPoll(){
     document.getElementById("subs-fetch-list").innerHTML = jobs.map(j=>{
       const col=FETCH_COL[j.status]||"var(--muted)";
       const est=FETCH_TXT[j.status]||j.status;
-      const err=j.error?` — <span style="color:var(--amber)">${esc(j.error)}</span>`:"";
+      const err=j.error?` — <span data-style="color:var(--amber)">${esc(j.error)}</span>`:"";
       return `<div class="list-item">
-        <div style="flex:1;min-width:0">
-          <div style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(j.name)}</div>
-          <div style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(j.last_log||"")}</div>
+        <div data-style="flex:1;min-width:0">
+          <div data-style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(j.name)}</div>
+          <div data-style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(j.last_log||"")}</div>
         </div>
-        <span class="item-badge" style="border-color:${col};color:${col}">${est}${err}</span>
-        <button class="btn" style="padding:2px 8px;font-size:11px"
+        <span class="item-badge" data-style="border-color:${col};color:${col}">${est}${err}</span>
+        <button class="btn" data-style="padding:2px 8px;font-size:11px"
           ${acc("click","openLogModal",j.name,"/api/subs/fetch/log/"+j.id)}>log</button>
       </div>`;
     }).join("");
@@ -997,7 +997,7 @@ function updateYtdlp(d){
         const ok=j.status==="done";
         return`<div class="log-entry">
           <span class="${ok?"tick-ok":"tick-err"}">${ok?"✓":"✗"}</span>
-          <span class="log-entry-name" style="color:${ok?"var(--text)":"var(--red)"}">${esc(j.title||j.url)}</span>
+          <span class="log-entry-name" data-style="color:${ok?"var(--text)":"var(--red)"}">${esc(j.title||j.url)}</span>
           <button class="item-cancel" ${acc("click","openLogModal",j.title||j.id,"/api/ytdlp/log/"+j.id)} title="View log">📋</button>
         </div>`;
       }).join("")
@@ -1097,7 +1097,7 @@ function rmxKey(fi, ix){ return fi + ":" + ix; }
 
 function rmxRenderSlots(){
   document.getElementById("rmx-slots").innerHTML = rmxSlots.map((p,i)=>`
-    <div class="file-row" style="margin-bottom:6px">
+    <div class="file-row" data-style="margin-bottom:6px">
       <input class="inp cyan" id="rmx-in-${i}" type="text" value="${esc(p)}"
              placeholder="Ruta del fichero ${i+1}" autocomplete="off"
              ${acc("input","rmxSetSlot",i)}>
@@ -1132,15 +1132,15 @@ function rmxDesc(t){
   if(t.type==="video")
     return `${t.codec} ${t.width}x${t.height} ${t.hdr}`;
   if(t.type==="audio")
-    return `${t.codec}${t.atmos?" <b style='color:var(--green)'>ATMOS</b>":""} ${t.channels||"?"}ch`
+    return `${t.codec}${t.atmos?" <b data-style='color:var(--green)'>ATMOS</b>":""} ${t.channels||"?"}ch`
          + (t.bitrate?` ${Math.round(t.bitrate/1000)}k`:"");
   // Subtítulos: lo que importa de un vistazo es si ya es texto o hay que sacarlo
   // por OCR, que son minutos por pista y no segundos.
   if(t.type==="subtitle")
-    return `${t.codec}` + (t.srt ? ` <span style="color:var(--green);font-size:11px">texto</span>`
-          : t.ocr ? ` <span style="color:var(--amber);font-size:11px">imagen · OCR</span>`
-          : t.text ? ` <span style="color:var(--dim);font-size:11px">texto</span>`
-          : ` <span style="color:var(--red);font-size:11px">sin ruta a SRT</span>`);
+    return `${t.codec}` + (t.srt ? ` <span data-style="color:var(--green);font-size:11px">texto</span>`
+          : t.ocr ? ` <span data-style="color:var(--amber);font-size:11px">imagen · OCR</span>`
+          : t.text ? ` <span data-style="color:var(--dim);font-size:11px">texto</span>`
+          : ` <span data-style="color:var(--red);font-size:11px">sin ruta a SRT</span>`);
   return t.codec;
 }
 
@@ -1151,13 +1151,13 @@ function rmxRender(){
     // esc() en todo lo que venga del disco: los nombres de fichero y sobre todo
     // los TÍTULOS DE PISTA son texto libre metido en los metadatos del MKV, no
     // datos nuestros. Un título con un '<' rompía el HTML de la fila.
-    if(f.error) return `<div class="card" style="border-color:var(--red)">
-        <b>${esc(f.path)}</b><br><span style="color:var(--red)">${esc(f.error)}</span></div>`;
+    if(f.error) return `<div class="card" data-style="border-color:var(--red)">
+        <b>${esc(f.path)}</b><br><span data-style="color:var(--red)">${esc(f.error)}</span></div>`;
     const isBase = rmxVideo && rmxVideo.fi===fi;
-    return `<div class="card" style="margin-bottom:10px;${isBase?"border-color:var(--cyan)":""}">
-      <div style="font-weight:600;margin-bottom:8px">${esc(f.name)}
-        ${isBase?'<span class="stream-type-badge stream-type-audio" style="margin-left:8px">BASE</span>':''}
-        <span style="color:var(--dim);font-weight:400;font-size:12px;margin-left:8px">
+    return `<div class="card" data-style="margin-bottom:10px;${isBase?"border-color:var(--cyan)":""}">
+      <div data-style="font-weight:600;margin-bottom:8px">${esc(f.name)}
+        ${isBase?'<span class="stream-type-badge stream-type-audio" data-style="margin-left:8px">BASE</span>':''}
+        <span data-style="color:var(--dim);font-weight:400;font-size:12px;margin-left:8px">
           ${(f.duration/60).toFixed(1)} min</span></div>
       ${(f.tracks||[]).map(t=>rmxRow(fi,t)).join("")}
     </div>`;
@@ -1175,16 +1175,16 @@ function rmxRow(fi,t){
     // de vídeo en vez de quedarse en /encoded. Así se hace todo de una pasada
     // (sync + conversiones + remux + encode) en lugar de encolar a mano después.
     // Solo se ofrece en la pista de vídeo ELEGIDA, que es la que se encodearía.
-    return `<div class="stream-row" style="padding:8px 10px">
-      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <label style="display:flex;gap:10px;align-items:center;cursor:pointer;flex:1">
+    return `<div class="stream-row" data-style="padding:8px 10px">
+      <div data-style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <label data-style="display:flex;gap:10px;align-items:center;cursor:pointer;flex:1">
           <input type="radio" name="rmxvid" ${sel?"checked":""}
                  ${acc("change","rmxSetVideo",fi,t.index)}>
           <span class="stream-type-badge">Vídeo</span>
           <span>${rmxDesc(t)}</span>
-          <span style="color:var(--dim);font-size:12px">${t.fps||""}</span>
+          <span data-style="color:var(--dim);font-size:12px">${t.fps||""}</span>
         </label>
-        ${sel?`<label style="font-size:12px;color:var(--pink)" title="Al acabar el remux, la salida entra sola en la cola del encoder (C:\\Media\\encode_queue). El audio ya convertido y los subtítulos ya en SRT se copian, no se reprocesan.">
+        ${sel?`<label data-style="font-size:12px;color:var(--pink)" title="Al acabar el remux, la salida entra sola en la cola del encoder (C:\\Media\\encode_queue). El audio ya convertido y los subtítulos ya en SRT se copian, no se reprocesan.">
           <input type="checkbox" ${rmxEncodeAfter?"checked":""}
                  ${acc("change","rmxSetEncodeAfter")}>
           → encodear vídeo al terminar</label>`:``}
@@ -1200,42 +1200,42 @@ function rmxRow(fi,t){
   // Escaparlo no rompe nada: rec.text es SIEMPRE texto plano -recommend() une
   // sus lineas con \n y el cliente solo concatena cadenas-, no lleva marcado
   // intencionado como si lo lleva rmxDesc().
-  return `<div class="stream-row" style="padding:8px 10px">
-    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+  return `<div class="stream-row" data-style="padding:8px 10px">
+    <div data-style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <input type="checkbox" ${on?"checked":""} ${acc("change","rmxToggleTrack",fi,t.index)}>
       <span class="stream-type-badge ${t.type==="audio"?"stream-type-audio":""}">${t.type==="audio"?"Audio":"Sub"}</span>
-      <span style="min-width:190px">${rmxDesc(t)}</span>
-      <span style="color:var(--dim);font-size:12px;flex:1">${esc(t.title||"")}</span>
+      <span data-style="min-width:190px">${rmxDesc(t)}</span>
+      <span data-style="color:var(--dim);font-size:12px;flex:1">${esc(t.title||"")}</span>
       ${on?`
-        <input class="inp" style="width:60px;padding:5px 7px;font-size:12px" value="${esc(p.lang||"")}"
+        <input class="inp" data-style="width:60px;padding:5px 7px;font-size:12px" value="${esc(p.lang||"")}"
                ${acc("input","rmxSetCampo",k,"lang")} title="Idioma">
-        <input class="inp" style="width:150px;padding:5px 7px;font-size:12px" value="${esc(p.title||"")}"
+        <input class="inp" data-style="width:150px;padding:5px 7px;font-size:12px" value="${esc(p.title||"")}"
                ${acc("input","rmxSetCampo",k,"title")} placeholder="título">
-        <label style="font-size:12px"><input type="checkbox" ${p.def?"checked":""}
+        <label data-style="font-size:12px"><input type="checkbox" ${p.def?"checked":""}
                ${acc("change","rmxSetCheck",k,"def",false)}> default</label>
-        <label style="font-size:12px"><input type="checkbox" ${p.forced?"checked":""}
+        <label data-style="font-size:12px"><input type="checkbox" ${p.forced?"checked":""}
                ${acc("change","rmxSetCheck",k,"forced",false)}> forced</label>
-        <input class="inp" style="width:82px;padding:5px 7px;font-size:12px" type="number" value="${p.sync_ms}"
+        <input class="inp" data-style="width:82px;padding:5px 7px;font-size:12px" type="number" value="${p.sync_ms}"
                ${acc("input","rmxSetSync",k)} title="Desfase en ms">
-        ${!isBase?`<button class="btn btn-cyan" style="padding:5px 9px;font-size:12px"
+        ${!isBase?`<button class="btn btn-cyan" data-style="padding:5px 9px;font-size:12px"
                ${acc("click","rmxMeasure",fi,t.index)}>⇌ Medir</button>`:``}
-        ${(t.type==="audio"&&t.nativo===false)?`<label style="font-size:12px;color:var(--amber)"
+        ${(t.type==="audio"&&t.nativo===false)?`<label data-style="font-size:12px;color:var(--amber)"
                title="${t.objects?"Conserva los objetos Atmos (JOC). Pasa por DEE: varios minutos.":"El TV no decodifica este códec; copiarlo hace que Plex transcodifique en cada reproducción."}">
                <input type="checkbox" ${p.convert?"checked":""}
                ${acc("change","rmxSetConvert",k,t.objects?"ddp_atmos":"ddp")}>
                → DD+${t.objects?" Atmos":""}</label>`:``}
-        ${(t.type==="subtitle"&&t.srtable&&!t.srt)?`<label style="font-size:12px;color:var(--amber)"
+        ${(t.type==="subtitle"&&t.srtable&&!t.srt)?`<label data-style="font-size:12px;color:var(--amber)"
                title="${t.ocr?"OCR con PgsToSrt: varios minutos por pista":"conversión con ffmpeg: segundos"}">
                <input type="checkbox" ${p.to_srt?"checked":""}
                ${acc("change","rmxSetCheck",k,"to_srt",true)}>
                → SRT${t.ocr?" (OCR)":""}</label>`:``}
-        ${(t.type==="subtitle"&&!t.srtable&&!t.srt)?`<span style="font-size:12px;color:var(--red)"
+        ${(t.type==="subtitle"&&!t.srtable&&!t.srt)?`<span data-style="font-size:12px;color:var(--red)"
                title="PgsToSrt solo entiende PGS">no convertible, se copia tal cual</span>`:``}
-        ${p.convert?`<span style="font-size:12px;color:var(--muted);padding:5px 7px"
+        ${p.convert?`<span data-style="font-size:12px;color:var(--muted);padding:5px 7px"
                title="${p.objects?"DD+ Atmos va siempre a 768k, igual que el pipeline de vídeo: es el bitrate que usan Netflix, Disney+, Apple TV+ y Amazon para este códec.":"Calculado por canales, o sobre el bitrate de origen si la fuente es lossy y bajo."}">${p.bitrate}k</span>`:``}
       `:``}
     </div>
-    ${on&&p.rec?`<div style="margin:6px 0 0 30px;font-size:12px;padding:7px 10px;border-radius:6px;
+    ${on&&p.rec?`<div data-style="margin:6px 0 0 30px;font-size:12px;padding:7px 10px;border-radius:6px;
         background:rgba(255,255,255,.04);border-left:3px solid var(--${p.rec.level==='ok'?'green':p.rec.level==='danger'?'red':'amber'})">
         ${esc(p.rec.text)}</div>`:``}
   </div>`;
@@ -1626,21 +1626,21 @@ async function rmxPoll(){
       if(j.status==="running" && j.phase){
         const known = (typeof j.pct==="number");
         const w = known ? Math.max(2,Math.min(100,j.pct)) : 100;
-        bar=`<div style="margin-top:6px">
-          <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--dim);margin-bottom:3px">
+        bar=`<div data-style="margin-top:6px">
+          <div data-style="display:flex;justify-content:space-between;font-size:11px;color:var(--dim);margin-bottom:3px">
             <span>${esc(j.phase)}</span><span>${known?j.pct+" %":"…"}</span></div>
-          <div style="height:6px;border-radius:4px;background:rgba(255,255,255,.08);overflow:hidden">
-            <div class="${known?"":"rmx-indet"}" style="height:100%;width:${w}%;border-radius:4px;
+          <div data-style="height:6px;border-radius:4px;background:rgba(255,255,255,.08);overflow:hidden">
+            <div class="${known?"":"rmx-indet"}" data-style="height:100%;width:${w}%;border-radius:4px;
                  background:var(--cyan);transition:width .4s"></div></div></div>`;
       }
-      return `<div class="stream-row" style="padding:9px 11px;margin-bottom:6px">
-        <div style="display:flex;gap:10px;align-items:center">
-          <span style="color:var(--${col});font-weight:600;min-width:80px">${esc(j.status)}</span>
-          <span style="flex:1">${esc(j.name)}</span>
+      return `<div class="stream-row" data-style="padding:9px 11px;margin-bottom:6px">
+        <div data-style="display:flex;gap:10px;align-items:center">
+          <span data-style="color:var(--${col});font-weight:600;min-width:80px">${esc(j.status)}</span>
+          <span data-style="flex:1">${esc(j.name)}</span>
           ${["queued","waiting","running"].includes(j.status)
             ? `<button class="item-cancel" ${acc("click","postUrl","/api/remux/cancel/"+j.id)}>✕</button>`:``}
         </div>
-        <div style="color:var(--dim);font-size:12px;margin-top:3px">${esc(j.last_log||"")}</div>
+        <div data-style="color:var(--dim);font-size:12px;margin-top:3px">${esc(j.last_log||"")}</div>
         ${bar}
       </div>`;
     }).join("");
@@ -1663,22 +1663,22 @@ function sanPinta(d, corriendo){
   if(!d && !corriendo){ host.innerHTML=""; return; }
   let h="";
   if(corriendo){
-    h+=`<div class="bar" style="margin-bottom:10px"><div class="bar-fill" style="width:${d&&d.pct?d.pct:0}%"></div></div>`;
-    h+=`<div style="color:var(--cyan);font-size:13px">Saneando&hellip; ${esc((d&&d.stage)||"")}</div>`;
+    h+=`<div class="bar" data-style="margin-bottom:10px"><div class="bar-fill" data-style="width:${d&&d.pct?d.pct:0}%"></div></div>`;
+    h+=`<div data-style="color:var(--cyan);font-size:13px">Saneando&hellip; ${esc((d&&d.stage)||"")}</div>`;
   }
   const r = d && d.res ? d.res : (d && d.acciones ? d : null);
   if(r){
     if(r.acciones && r.acciones.length){
-      h+=`<div style="font-size:13px;margin-top:8px"><b>Qu&eacute; hace:</b><ul style="margin:6px 0 0 18px;padding:0">`+
+      h+=`<div data-style="font-size:13px;margin-top:8px"><b>Qu&eacute; hace:</b><ul data-style="margin:6px 0 0 18px;padding:0">`+
          r.acciones.map(a=>`<li>${esc(a)}</li>`).join("")+`</ul></div>`;
     }
     if(r.avisos && r.avisos.length){
-      h+=`<div style="font-size:13px;margin-top:8px;color:var(--amber)"><b>Avisos:</b><ul style="margin:6px 0 0 18px;padding:0">`+
+      h+=`<div data-style="font-size:13px;margin-top:8px;color:var(--amber)"><b>Avisos:</b><ul data-style="margin:6px 0 0 18px;padding:0">`+
          r.avisos.map(a=>`<li>${esc(a)}</li>`).join("")+`</ul></div>`;
     }
     if(!corriendo && r.motivo){
       const col = r.ok ? "var(--green)" : "var(--red)";
-      h+=`<div style="margin-top:10px;color:${col};font-size:13px"><b>${esc(r.motivo)}</b></div>`;
+      h+=`<div data-style="margin-top:10px;color:${col};font-size:13px"><b>${esc(r.motivo)}</b></div>`;
     }
   }
   host.innerHTML=h;
@@ -1692,7 +1692,7 @@ async function sanAnalizar(){
     const r=await fetch("/api/sanear/analizar",{method:"POST",headers:{"Content-Type":"application/json"},
                                                body:JSON.stringify({path})});
     sanPinta(await r.json(), false);
-  }catch(e){ document.getElementById("san-out").innerHTML=`<div style="color:var(--red)">Error: ${esc(""+e)}</div>`; }
+  }catch(e){ document.getElementById("san-out").innerHTML=`<div data-style="color:var(--red)">Error: ${esc(""+e)}</div>`; }
   finally{ b.disabled=false; b.innerHTML="&#10227; Analizar"; }
 }
 async function sanRun(){
@@ -1778,3 +1778,16 @@ function despachar(ev, atributo){
 document.addEventListener("click", ev => despachar(ev, "data-click"));
 document.addEventListener("change", ev => despachar(ev, "data-change"));
 document.addEventListener("input", ev => despachar(ev, "data-input"));
+
+// ── Estilos en linea ────────────────────────────────────────────────────────
+// Los estilos van en data-style y no en style="...": la CSP no admite estilos
+// de atributo sin 'unsafe-inline'. Se aplican por CSSOM al insertarse el nodo.
+function aplicarEstilos(nodo){
+  if(nodo.matches && nodo.matches("[data-style]")) nodo.style.cssText = nodo.getAttribute("data-style");
+  if(nodo.querySelectorAll)
+    nodo.querySelectorAll("[data-style]").forEach(el => { el.style.cssText = el.getAttribute("data-style"); });
+}
+aplicarEstilos(document.body);
+new MutationObserver(ms => {
+  for(const m of ms) for(const n of m.addedNodes) if(n.nodeType === 1) aplicarEstilos(n);
+}).observe(document.body, {childList: true, subtree: true});

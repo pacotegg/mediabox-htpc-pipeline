@@ -198,12 +198,11 @@ def _guarda_de_entrada():
 #          HTML dentro (los titulos de pista de un MKV son texto libre), no
 #          podria cargar un script de fuera NI MANDAR NADA a ningun sitio, que es
 #          lo que convierte un fallo de escapado en una fuga.
-#          script-src SIN 'unsafe-inline': no hay ningun <script> en linea ni
-#          atributo on*; todo el JS es static/panel.js, y los controles se
-#          despachan por data-click/data-change/data-input (ver acc() en panel.js).
-#          Asi un texto inyectado no puede ejecutar codigo. style-src si lleva
-#          'unsafe-inline' porque la interfaz usa atributos style="..." generados:
-#          una inyeccion de estilos no ejecuta codigo, solo cambia el aspecto.
+#          Ni scripts ni estilos en linea: no hay <script>, ni <style>, ni
+#          atributos on* ni style="...". Los controles se despachan por
+#          data-click/data-change/data-input (ver acc() en panel.js) y los
+#          estilos van en data-style, que panel.js aplica por CSSOM. Asi un texto
+#          inyectado no puede ejecutar codigo ni cambiar el aspecto por atributo.
 #          connect-src 'self' deja sin salida a cualquier inyeccion.
 #   frame-ancestors 'none' - que nadie pueda meter el panel en un iframe y
 #          hacerte pulsar STOP sin que lo veas.
@@ -212,7 +211,7 @@ def _guarda_de_entrada():
 #          cuando la pagina pide las fuentes a Google.
 _CSP = ("default-src 'self'; "
         "script-src 'self'; "
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "style-src 'self' https://fonts.googleapis.com; "
         "font-src 'self' https://fonts.gstatic.com; "
         "img-src 'self' data:; "
         "connect-src 'self'; "

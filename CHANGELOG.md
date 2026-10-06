@@ -28,9 +28,15 @@ correspondiente, que queda en la raíz con el detalle completo.
   `data-input` con sus argumentos en `data-args` (JSON), despachados por
   `panel.js` contra una lista blanca (`ACCIONES`). Probado en el navegador: la
   interfaz funciona (pestañas, explorador, campos de remux) y la CSP bloquea un
-  `onload` y un `<script>` inyectados. `style-src` conserva `'unsafe-inline'`
-  porque hay atributos `style="..."` generados: un estilo inyectado no ejecuta
-  código.
+  `onload` y un `<script>` inyectados.
+- **CSP sin `'unsafe-inline'` en estilos.** Los ~107 `style="..."` pasan a
+  `data-style`, y `panel.js` los aplica por CSSOM (`style.cssText`) al insertarse
+  cada nodo, que la CSP sí permite. Probado: estáticos y generados (margen de una
+  fila nueva) se aplican, y un `style=` inyectado vía `innerHTML` queda bloqueado.
+- **`subsfetch.py`:** `_ps_q` tenía la misma carencia de comillas tipográficas
+  (corregido). Las descargas de la API y los subtítulos se leen con tope de 20 MB,
+  y un miembro de ZIP mayor de ese tope se descarta sin descomprimirlo (protección
+  contra ZIP bomba). El WAV temporal pasa a `mkstemp`, con nombre impredecible.
 
 ## 2026-10-06 — Revisión de encode.ps1: guarda de salida truncada, techo único y comentarios
 
