@@ -118,6 +118,43 @@ def _host_permitido(host):
     return h in _HOST_NOMBRES_OK
 
 
+# ── Rutas que el panel acepta ────────────────────────────────────────────────
+# Toda ruta que llega del navegador se resuelve (realpath: un enlace simbolico o
+# una junction no sirve para salir) y tiene que caer dentro de una de estas
+# carpetas, con todo lo que cuelga de ellas.
+_RAICES = [
+    ("E:\\", "E:\\"),
+    (r"C:\Media", r"C:\Media"),
+    (os.path.join(os.path.expanduser("~"), "Downloads"), "Descargas"),
+]
+_RAICES_NORM = [os.path.normcase(os.path.realpath(r)) for r, _ in _RAICES]
+
+
+def _ruta_permitida(p):
+    if not p:
+        return False
+    try:
+        r = os.path.normcase(os.path.realpath(os.path.expanduser(str(p))))
+    except (OSError, ValueError):
+        return False
+    return any(r == raiz or r.startswith(raiz.rstrip("\\") + "\\") for raiz in _RAICES_NORM)
+
+
+def _rechazo_ruta(p):
+    if _ruta_permitida(p):
+        return None
+    return jsonify({"ok": False,
+                    "error": "Ruta fuera de las carpetas permitidas (E:\\, C:\\Media y Descargas)."}), 403
+
+
+def _url_permitida(url):
+    try:
+        p = urlparse(url)
+    except ValueError:
+        return False
+    return p.scheme in ("http", "https") and bool(p.netloc) and not url.startswith("-")
+
+
 @app.before_request
 def _guarda_de_entrada():
     # 0) DE DONDE VIENE la conexion TCP (solo localhost, LAN privada o Tailscale).
@@ -160,17 +197,21 @@ def _guarda_de_entrada():
 #          Google, asi que se permiten esas y NADA MAS: aunque colara texto con
 #          HTML dentro (los titulos de pista de un MKV son texto libre), no
 #          podria cargar un script de fuera NI MANDAR NADA a ningun sitio, que es
-#          lo que convierte un fallo de escapado en una fuga. Hacen falta los
-#          'unsafe-inline' porque el panel lleva su <style>, su <script> y sus
-#          onclick dentro del propio HTML; aun asi, connect-src 'self' deja sin
-#          salida a cualquier inyeccion.
+#          lo que convierte un fallo de escapado en una fuga.
+#          script-src SIN 'unsafe-inline': no hay ningun <script> en linea ni
+#          atributo on*; todo el JS es static/panel.js, y los controles se
+#          despachan por data-click/data-change/data-input (ver acc() en panel.js).
+#          Asi un texto inyectado no puede ejecutar codigo. style-src si lleva
+#          'unsafe-inline' porque la interfaz usa atributos style="..." generados:
+#          una inyeccion de estilos no ejecuta codigo, solo cambia el aspecto.
+#          connect-src 'self' deja sin salida a cualquier inyeccion.
 #   frame-ancestors 'none' - que nadie pueda meter el panel en un iframe y
 #          hacerte pulsar STOP sin que lo veas.
 #   nosniff - que el navegador no adivine el tipo de un log y lo trate como HTML.
 #   no-referrer - los nombres de tus peliculas no viajan en la cabecera Referer
 #          cuando la pagina pide las fuentes a Google.
 _CSP = ("default-src 'self'; "
-        "script-src 'self' 'unsafe-inline'; "
+        "script-src 'self'; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "font-src 'self' https://fonts.gstatic.com; "
         "img-src 'self' data:; "
@@ -428,7 +469,8 @@ _COLA_NO_TRABAJO = (".partial", ".opts")
 
 def _cola_pendientes(d):
     try:
-        return sorted(x for x in os.listdir(d) if not x.endswith(_COLA_NO_TRABAJO))
+        return sorted(x for x in os.listdir(d)
+                      if not x.endswith(_COLA_NO_TRABAJO) and not x.startswith("__tmp_"))
     except OSError:
         return []
 
@@ -467,45 +509,35 @@ def _tail_log(carpeta, n=40):
 # limitado a C: -acepta cualquier ruta-, simplemente no habia por donde subir.
 DRIVES_ROOT = "::unidades"
 
-def _list_drives():
-    entries = []
-    for letra in "CDEFGHIJKLMNOPQRSTUVWXYZ":
-        raiz = "%s:\\" % letra
-        if not os.path.isdir(raiz):
-            continue
-        libre = ""
-        try:
-            u = shutil.disk_usage(raiz)
-            libre = "%s libres de %s" % (fmt_size(u.free), fmt_size(u.total))
-        except Exception:
-            pass
-        entries.append({"name": "%s:\\" % letra, "path": raiz, "type": "dir", "size": libre})
-    return entries
-
-
 @app.route("/api/browse", methods=["POST"])
 def browse():
     data = request.get_json(silent=True) or {}
     # Por defecto arranca en BASE (raiz de medios en Windows), no en ~
     path = (data.get("path") or BASE).strip()
     if path == DRIVES_ROOT:
-        return jsonify({"ok": True, "path": DRIVES_ROOT, "entries": _list_drives()})
+        return jsonify({"ok": True, "path": DRIVES_ROOT,
+                        "entries": [{"name": nombre, "path": r, "type": "dir", "size": ""}
+                                    for r, nombre in _RAICES]})
     path = os.path.expanduser(path)
     try:
         path = os.path.realpath(path)
     except:
         path = BASE
+    if not _ruta_permitida(path):
+        path = BASE
     if not os.path.isdir(path):
         path = os.path.dirname(path) or BASE
+    if not _ruta_permitida(path):
+        path = BASE
     try:
         entries = []
         parent = os.path.dirname(path)
-        if parent != path:
+        if parent != path and _ruta_permitida(parent):
             entries.append({"name": "..", "path": parent, "type": "dir", "size": ""})
         else:
-            # Raiz de unidad: el ".." lleva a la lista de unidades.
+            # Raiz permitida: el ".." lleva a la lista de raices.
             entries.append({"name": "..", "path": DRIVES_ROOT, "type": "dir",
-                            "size": "unidades del equipo"})
+                            "size": "carpetas permitidas"})
         items = sorted(os.scandir(path), key=lambda e: (not e.is_dir(), e.name.lower()))
         for item in items:
             if item.name.startswith("."): continue
@@ -1209,6 +1241,27 @@ def _kill_pid(pid):
         except Exception:
             return False
 
+def _pid_del_trabajo(pid, fichero_pid):
+    """Un PID guardado en fichero solo es del trabajo si el proceso ya existia
+    cuando se escribio ese fichero. Un PID reutilizado por otro programa
+    arranca DESPUES, y matarlo con taskkill /T se llevaria por delante su arbol."""
+    try:
+        marca = os.path.getmtime(fichero_pid)
+    except OSError:
+        return False
+    ps = ("(Get-Process -Id %d -ErrorAction SilentlyContinue).StartTime"
+          ".ToUniversalTime().Ticks" % int(pid))
+    try:
+        r = subprocess.run([PWSH, "-NoProfile", "-Command", ps], capture_output=True,
+                           text=True, timeout=15, creationflags=_NO_WINDOW)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    txt = r.stdout.strip()
+    if not txt.isdigit():
+        return False
+    arranque = (int(txt) - 621355968000000000) / 1e7
+    return arranque <= marca + 5
+
 def enc_kill_slots():
     """Mata el trabajo de TODAS las ranuras de video y las deja en idle.
 
@@ -1303,29 +1356,37 @@ def enc_queue_move():
         return n
 
     renamed = []
+    hechos = []   # (origen, destino) de cada renombrado, para deshacerlos si algo falla
+    def _mover(a, b):
+        os.rename(a, b)
+        hechos.append((a, b))
     try:
         # Paso 1: a nombres temporales para evitar colisiones durante el renombrado
         tmp_map = []
         for i, n in enumerate(items):
             base = strip_prefix(n)
             tmp = f"__tmp_{i:03d}_{base}"
-            os.rename(os.path.join(ENC_QUEUE, n), os.path.join(ENC_QUEUE, tmp))
+            _mover(os.path.join(ENC_QUEUE, n), os.path.join(ENC_QUEUE, tmp))
             # mover tambien los sidecars si existen (.opts / .thd)
             for sfx in (".opts", ".thd"):
                 sc = os.path.join(ENC_QUEUE, n + sfx)
                 if os.path.exists(sc):
-                    os.rename(sc, os.path.join(ENC_QUEUE, tmp + sfx))
+                    _mover(sc, os.path.join(ENC_QUEUE, tmp + sfx))
             tmp_map.append((tmp, base))
         # Paso 2: del temporal al nombre final NNN_
         for i, (tmp, base) in enumerate(tmp_map):
             final = f"{i:03d}_{base}"
-            os.rename(os.path.join(ENC_QUEUE, tmp), os.path.join(ENC_QUEUE, final))
+            _mover(os.path.join(ENC_QUEUE, tmp), os.path.join(ENC_QUEUE, final))
             for sfx in (".opts", ".thd"):
                 sc = os.path.join(ENC_QUEUE, tmp + sfx)
                 if os.path.exists(sc):
-                    os.rename(sc, os.path.join(ENC_QUEUE, final + sfx))
+                    _mover(sc, os.path.join(ENC_QUEUE, final + sfx))
             renamed.append(final)
     except Exception as e:
+        for a, b in reversed(hechos):
+            try: os.rename(b, a)
+            except OSError: pass
+        _enc_cache["sig"] = None
         return jsonify({"ok": False, "error": f"Rename failed: {e}"})
 
     # Invalidar cache para que el cambio se vea en el proximo tick
@@ -1700,6 +1761,8 @@ def sync_ensure_worker():
 def sync_probe():
     data = request.get_json(silent=True) or {}
     fp   = (data.get("filepath") or "").strip()
+    if fp and not _ruta_permitida(fp):
+        return _rechazo_ruta(fp)
     if not fp or not os.path.isfile(fp):
         return jsonify({"ok": False, "error": "File not found"})
     streams, err = sync_probe_streams(fp, con_error=True)
@@ -1739,6 +1802,8 @@ def sync_add():
     audio_streams = _as_list("audio_streams", "audio_stream")
     sub_streams   = _as_list("sub_streams",   "sub_stream")
 
+    if filepath and not _ruta_permitida(filepath):
+        return _rechazo_ruta(filepath)
     if not filepath or not os.path.isfile(filepath):
         return jsonify({"ok": False, "error": "File not found"})
     if not audio_streams and not sub_streams:
@@ -1894,6 +1959,8 @@ def audio_add():
     # (El original no se toca; el watcher mueve la copia a running -> done.)
     data = request.get_json(silent=True) or {}
     fp   = (data.get("filepath") or "").strip()
+    if fp and not _ruta_permitida(fp):
+        return _rechazo_ruta(fp)
     if not fp or not os.path.isfile(fp):
         return jsonify({"ok": False, "error": "File not found"})
     streams = audio_probe_streams(fp)
@@ -1912,6 +1979,8 @@ def audio_to_encoder():
     # que quieres reencodear el video tambien, no solo tocar el audio.
     data = request.get_json(silent=True) or {}
     fp   = (data.get("filepath") or "").strip()
+    if fp and not _ruta_permitida(fp):
+        return _rechazo_ruta(fp)
     if not fp or not os.path.isfile(fp):
         return jsonify({"ok": False, "error": "File not found"})
     return jsonify(_encolar_async(fp, ENC_QUEUE, "encoder"))
@@ -1946,6 +2015,8 @@ def audio_cancel(job_id):
     if job_id == "live":
         try:
             with open(AUD_PID_F) as f: pid = int(f.read().strip())
+            if not _pid_del_trabajo(pid, AUD_PID_F):
+                return jsonify({"ok": False, "error": "El PID guardado ya no es de este trabajo; no mato nada."})
             _kill_pid(pid)
             return jsonify({"ok": True, "killed": pid})
         except Exception as e:
@@ -1985,6 +2056,8 @@ def subs_add():
     # carpeta subs_queue sin pasar por aqui.
     data = request.get_json(silent=True) or {}
     fp   = (data.get("filepath") or "").strip()
+    if fp and not _ruta_permitida(fp):
+        return _rechazo_ruta(fp)
     if not fp or not os.path.isfile(fp):
         return jsonify({"ok": False, "error": "File not found"})
     return jsonify(_encolar_async(fp, SUB_QUEUE, "subs"))
@@ -2041,6 +2114,8 @@ def subs_cancel(job_id):
     if job_id == "live":
         try:
             with open(SUBS_PID_F) as f: pid = int(f.read().strip())
+            if not _pid_del_trabajo(pid, SUBS_PID_F):
+                return jsonify({"ok": False, "error": "El PID guardado ya no es de este trabajo; no mato nada."})
             _kill_pid(pid)
             return jsonify({"ok": True, "killed": pid})
         except Exception as e:
@@ -2184,6 +2259,8 @@ def subs_fetch():
     """Busca subtitulos para UN fichero, a peticion del usuario."""
     d  = request.get_json(silent=True) or {}
     fp = (d.get("filepath") or "").strip()
+    if fp and not _ruta_permitida(fp):
+        return _rechazo_ruta(fp)
     if not fp or not os.path.isfile(fp):
         return jsonify({"ok": False, "error": "No encuentro el fichero"})
     if not os.path.isfile(SUBSFETCH_PY):
@@ -2306,7 +2383,7 @@ def ytdlp_worker():
                "--no-keep-fragments","--abort-on-unavailable-fragments",
                "-f", fmt,
                "-o", os.path.join(YTDLP_DIR, "%(title)s (%(upload_date>%Y)s) %(height)sp.%(ext)s"),
-               job["url"]]
+               "--", job["url"]]
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                     text=True, bufsize=1, errors="replace",
@@ -2381,6 +2458,7 @@ def ytdlp_add():
     url  = (data.get("url") or "").strip()
     quality = data.get("quality","auto"); title = data.get("title","")
     if not url: return jsonify({"ok":False,"error":"No URL"})
+    if not _url_permitida(url): return jsonify({"ok":False,"error":"Solo se aceptan URLs http(s)"}), 400
     if quality not in QUALITY_PROFILES: quality = "auto"
     job = {"id":str(uuid.uuid4())[:8],"url":url,"title":title or url,
            "quality":quality,"status":"pending","added":datetime.now().isoformat()}
@@ -2393,8 +2471,9 @@ def ytdlp_fetch_title():
     data = request.get_json(silent=True) or {}
     url  = (data.get("url") or "").strip()
     if not url: return jsonify({"ok":False,"title":""})
+    if not _url_permitida(url): return jsonify({"ok":False,"title":""}), 400
     try:
-        r = subprocess.run([YTDLP,"--no-playlist","--print","%(title)s",url],
+        r = subprocess.run([YTDLP,"--no-playlist","--print","%(title)s","--",url],
                            capture_output=True, text=True, timeout=15,
                            creationflags=_NO_WINDOW)
         return jsonify({"ok":True,"title":r.stdout.strip().split("\n")[0]})
@@ -2674,8 +2753,14 @@ def _audio_ordinal(path, abs_index):
 def _ps_q(s):
     """Comilla simple de PowerShell: dentro de '...' solo hay que doblar la '.
     Sin esto, una pelicula con apostrofo en el nombre (Ocean's Eleven) rompe el
-    -Command y pwsh interpreta el resto de la ruta como codigo."""
-    return str(s).replace("'", "''")
+    -Command y pwsh interpreta el resto de la ruta como codigo.
+    PowerShell trata tambien las comillas tipograficas (‘ ’ ‚ ‛) como delimitadores:
+    una ruta con una de ellas cerraba la cadena. Se pasan como caracter (char),
+    asi la ruta llega identica."""
+    out = str(s).replace("'", "''")
+    for c in "‘’‚‛":
+        out = out.replace(c, "'+[char]0x%04X+'" % ord(c))
+    return out
 
 
 def _sync_args(tid, t):
@@ -3450,6 +3535,8 @@ def remux_probe():
     paths = (request.json or {}).get("paths") or []
     out = []
     for p in paths[:6]:
+        if not _ruta_permitida(p):
+            out.append({"path": p, "error": "ruta fuera de las carpetas permitidas"}); continue
         if not os.path.isfile(p):
             out.append({"path": p, "error": "no existe"}); continue
         try:
@@ -3469,6 +3556,10 @@ def remux_measure():
     b, s = j.get("base") or {}, j.get("src") or {}
     if not (b.get("path") and s.get("path")):
         return jsonify({"ok": False, "error": "faltan base/src"}), 400
+    for x in (b, s):
+        bad = _rechazo_ruta(x.get("path"))
+        if bad:
+            return bad
     # QUE MEDICIONES QUIERE EL USUARIO (17/08/2026). El audio de 4 puntos va
     # SIEMPRE: cuesta 2 s y es la unica medida fina (0,5 ms frente a los ~83 ms
     # de la imagen y los ~200 ms de los subtitulos).
@@ -3601,6 +3692,9 @@ def remux_add():
     name = (j.get("output") or "").strip()
     if not vid.get("path") or not name:
         return jsonify({"error": "faltan video u output"}), 400
+    for p in [vid.get("path")] + [t.get("path") for t in trk if isinstance(t, dict)]:
+        if p and not _ruta_permitida(p):
+            return jsonify({"error": "ruta fuera de las carpetas permitidas: %s" % p}), 403
     if not name.lower().endswith(".mkv"):
         name += ".mkv"
     out = os.path.join(DONE_DIR, os.path.basename(name))
@@ -3727,6 +3821,9 @@ def sanear_analizar():
     path = ((request.json or {}).get("path") or "").strip()
     if not path:
         return jsonify({"ok": False, "motivo": "falta la ruta"}), 400
+    bad = _rechazo_ruta(path)
+    if bad:
+        return bad
     return jsonify(_sanear_lanzar(path, True))
 
 
@@ -3735,6 +3832,9 @@ def sanear_run():
     path = ((request.json or {}).get("path") or "").strip()
     if not path:
         return jsonify({"ok": False, "motivo": "falta la ruta"}), 400
+    bad = _rechazo_ruta(path)
+    if bad:
+        return bad
     if sanear_estado["corriendo"]:
         return jsonify({"ok": False, "motivo": "ya hay un saneado en marcha"}), 409
 

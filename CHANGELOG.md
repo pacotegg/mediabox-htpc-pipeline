@@ -4,6 +4,34 @@ Formato libre por sesión de trabajo (no SemVer: esto es un pipeline casero,
 no una librería versionada). Cada entrada resume el `TRASPASO_*.md`
 correspondiente, que queda en la raíz con el detalle completo.
 
+## 2026-10-06 — Seguridad del webpanel: rutas permitidas, yt-dlp, PID y cola
+
+- **Rutas acotadas.** El panel solo acepta rutas dentro de `E:\`, `C:\Media` y
+  `Descargas` (con todo lo que cuelga de ellas). Se resuelven con `realpath`, así
+  que un enlace simbólico o una junction no sirve para salir. Lo comprueban
+  `browse`, remux (probe, measure, add), sanear (analizar y run) y sync, audio,
+  subtítulos y su búsqueda. Antes `sanear/run` podía reconstruir cualquier
+  fichero del disco en su sitio.
+- **yt-dlp.** La URL tiene que ser `http(s)://` y se pasa tras `--`, así que un
+  valor como `--exec=…` o `--version` ya no llega como opción (probado).
+- **Cancelar audio/subtítulos.** Antes se mataba el PID del fichero de estado sin
+  comprobarlo. Ahora solo si el proceso arrancó antes de que se escribiera ese
+  fichero; un PID reutilizado se rechaza.
+- **Cola de encode.** Mover un fichero que falla a mitad deshace los renombrados;
+  los `__tmp_` ya no aparecen como entradas.
+- **Comillas de PowerShell.** `_ps_q` no protegía las comillas tipográficas
+  (‘ ’ ‚ ‛), que PowerShell también trata como delimitadores: una ruta con una de
+  ellas rompía el comando. Ahora llegan como carácter, verificado con nombres
+  reales.
+- **CSP sin `'unsafe-inline'` en scripts.** Ningún `<script>` en línea ni
+  atributo `on*`: los ~65 controles pasan a `data-click` / `data-change` /
+  `data-input` con sus argumentos en `data-args` (JSON), despachados por
+  `panel.js` contra una lista blanca (`ACCIONES`). Probado en el navegador: la
+  interfaz funciona (pestañas, explorador, campos de remux) y la CSP bloquea un
+  `onload` y un `<script>` inyectados. `style-src` conserva `'unsafe-inline'`
+  porque hay atributos `style="..."` generados: un estilo inyectado no ejecuta
+  código.
+
 ## 2026-10-06 — Revisión de encode.ps1: guarda de salida truncada, techo único y comentarios
 
 - **Guarda de salida por DURACIÓN, no por tamaño.** Antes se borraba la salida

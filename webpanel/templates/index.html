@@ -17,22 +17,22 @@
 <header>
   <div class="logo">MEDIA<span>BOX</span></div>
   <div class="tabs">
-    <button class="tab-btn tab-enc active" onclick="switchTab('enc')">
+    <button class="tab-btn tab-enc active" data-click="switchTab" data-args='["enc"]'>
       <div class="tab-dot" id="dot-enc"></div> ⚙ Encoder
     </button>
-    <button class="tab-btn tab-sync" onclick="switchTab('sync')">
+    <button class="tab-btn tab-sync" data-click="switchTab" data-args='["sync"]'>
       <div class="tab-dot" id="dot-sync"></div> ⇌ Sync
     </button>
-    <button class="tab-btn tab-remux" onclick="switchTab('remux')">
+    <button class="tab-btn tab-remux" data-click="switchTab" data-args='["remux"]'>
       <div class="tab-dot" id="dot-remux"></div> ⧉ Remux
     </button>
-    <button class="tab-btn tab-audio" onclick="switchTab('audio')">
+    <button class="tab-btn tab-audio" data-click="switchTab" data-args='["audio"]'>
       <div class="tab-dot" id="dot-audio"></div> ♪ Audio
     </button>
-    <button class="tab-btn tab-subs" onclick="switchTab('subs')">
+    <button class="tab-btn tab-subs" data-click="switchTab" data-args='["subs"]'>
       <div class="tab-dot" id="dot-subs"></div> ▤ Subs
     </button>
-    <button class="tab-btn tab-ytdlp" onclick="switchTab('ytdlp')">
+    <button class="tab-btn tab-ytdlp" data-click="switchTab" data-args='["ytdlp"]'>
       <div class="tab-dot" id="dot-ytdlp"></div> ↓ YT-DLP
     </button>
   </div>
@@ -78,11 +78,11 @@
        Vacio mientras el watcher siga con $MaxSlots = 1, que es lo normal hoy. -->
   <div id="enc-slots" class="enc-slots"></div>
   <div class="controls">
-    <button class="btn btn-red" id="enc-btn-stop" disabled onclick="encKill()" title="Mata el encode actual y PAUSA la cola">■ Stop</button>
-    <button class="btn btn-amber" id="enc-btn-skip" disabled onclick="encSkip()" title="Mata el encode actual y pasa al siguiente de la cola">▶▶ Skip</button>
-    <button class="btn btn-green" id="enc-btn-resume" style="display:none" onclick="encResume()" title="Quita la pausa: el watcher vuelve a coger ficheros de la cola">▶ Reanudar cola</button>
+    <button class="btn btn-red" id="enc-btn-stop" disabled data-click="encKill" title="Mata el encode actual y PAUSA la cola">■ Stop</button>
+    <button class="btn btn-amber" id="enc-btn-skip" disabled data-click="encSkip" title="Mata el encode actual y pasa al siguiente de la cola">▶▶ Skip</button>
+    <button class="btn btn-green" id="enc-btn-resume" style="display:none" data-click="encResume" title="Quita la pausa: el watcher vuelve a coger ficheros de la cola">▶ Reanudar cola</button>
     <label class="btn btn-muted" style="cursor:pointer" title="Con esto activo, nada arranca solo: una película solo entra cuando le has elegido modo (ICQ/QVBR) o le has puesto Mbps.&#10;NO es una pausa: lo que ya está decidido entra con normalidad y lo que está corriendo sigue.">
-      <input type="checkbox" id="enc-hold" onchange="encSetHold(this.checked)"> ⏸ Retener nuevos
+      <input type="checkbox" id="enc-hold" data-change="encSetHoldThis"> ⏸ Retener nuevos
     </label>
   </div>
 </div>
@@ -105,7 +105,7 @@
 <div class="error-panel" id="enc-error-panel">
   <div class="error-header">
     <span class="error-title">⚠ Encode Error</span>
-    <button class="btn btn-muted" onclick="encDismissError()">Dismiss</button>
+    <button class="btn btn-muted" data-click="encDismissError">Dismiss</button>
   </div>
   <div class="error-body" id="enc-error-body">—</div>
 </div>
@@ -129,8 +129,8 @@
 
   <div id="rmx-slots"></div>
   <div class="file-row" style="margin-top:6px">
-    <button class="btn btn-amber" onclick="rmxAddSlot()">+ A&ntilde;adir fichero</button>
-    <button class="btn btn-cyan" id="rmx-probe-btn" onclick="rmxProbe()">⟳ Leer pistas</button>
+    <button class="btn btn-amber" data-click="rmxAddSlot">+ A&ntilde;adir fichero</button>
+    <button class="btn btn-cyan" id="rmx-probe-btn" data-click="rmxProbe">⟳ Leer pistas</button>
     <!-- ORDEN DE LAS CASILLAS: de gratis a caro (19/08/2026). Lo que las separa
          no es solo el coste sino CUANDO corren: paquetes y subtitulos son RED —
          solo entran si el audio no engancha, o sea que marcarlos no cuesta nada
@@ -192,7 +192,7 @@
   <div id="rmx-launch" style="display:none;margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">
     <div class="file-row">
       <input class="inp cyan" id="rmx-outname" type="text" placeholder="Nombre de salida (.mkv)" autocomplete="off">
-      <button class="btn btn-green" onclick="rmxLaunch()">▶ Montar</button>
+      <button class="btn btn-green" data-click="rmxLaunch">▶ Montar</button>
     </div>
     <div style="color:var(--dim);font-size:12px;margin-top:6px">
       Sale en <code>C:\Media\encoded</code>. Espera turno si hay un encode en curso.
@@ -211,9 +211,9 @@
   </div>
   <div class="file-row">
     <input class="inp cyan" id="san-file-input" type="text" placeholder="Ruta del .mkv" autocomplete="off">
-    <button class="btn btn-amber" onclick="openBrowser('sanear')">&#128193;</button>
-    <button class="btn btn-cyan" id="san-ana-btn" onclick="sanAnalizar()">&#10227; Analizar</button>
-    <button class="btn btn-green" id="san-run-btn" onclick="sanRun()">&#9654; Sanear</button>
+    <button class="btn btn-amber" data-click="openBrowser" data-args='["sanear"]'>&#128193;</button>
+    <button class="btn btn-cyan" id="san-ana-btn" data-click="sanAnalizar">&#10227; Analizar</button>
+    <button class="btn btn-green" id="san-run-btn" data-click="sanRun">&#9654; Sanear</button>
   </div>
   <div id="san-out" style="margin-top:12px"></div>
 </div>
@@ -234,8 +234,8 @@
   <div class="file-row">
     <input class="inp cyan" id="sync-file-input" type="text"
       placeholder="Full path to video file, or Browse →" autocomplete="off">
-    <button class="btn btn-amber" onclick="openBrowser('sync')">📁 Browse</button>
-    <button class="btn btn-cyan" id="sync-probe-btn" onclick="syncProbe()">⟳ Probe</button>
+    <button class="btn btn-amber" data-click="openBrowser" data-args='["sync"]'>📁 Browse</button>
+    <button class="btn btn-cyan" id="sync-probe-btn" data-click="syncProbe">⟳ Probe</button>
   </div>
 
   <div id="sync-streams-area" class="sync-streams" style="display:none">
@@ -293,7 +293,7 @@
     </div>
 
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:4px;">
-      <button class="btn btn-cyan" id="sync-add-btn" onclick="syncAdd()">▲ Queue Encode</button>
+      <button class="btn btn-cyan" id="sync-add-btn" data-click="syncAdd">▲ Queue Encode</button>
       <span style="font-size:11px;color:var(--muted)" id="sync-output-hint"></span>
     </div>
   </div>
@@ -307,7 +307,7 @@
     <div class="log-body" id="sync-log-body">—</div>
   </div>
   <div class="controls">
-    <button class="btn btn-red" id="sync-btn-cancel" disabled onclick="syncCancel()">✕ Cancel</button>
+    <button class="btn btn-red" id="sync-btn-cancel" disabled data-click="syncCancel">✕ Cancel</button>
   </div>
 </div>
 
@@ -338,9 +338,9 @@
   <div class="file-row">
     <input class="inp" id="audio-file-input" type="text"
       placeholder="Ruta a un MKV, o Browse →" autocomplete="off">
-    <button class="btn btn-amber" onclick="openBrowser('audio')">📁 Browse</button>
-    <button class="btn btn-purple" id="audio-add-btn" onclick="audioAdd()">▲ Añadir a la cola</button>
-    <button class="btn btn-green" id="audio-to-enc-btn" onclick="audioToEncoder()" title="Copia el fichero a la cola del Encoder de vídeo (encode_queue): reencoda vídeo + convierte audio">⚙ A cola de vídeo</button>
+    <button class="btn btn-amber" data-click="openBrowser" data-args='["audio"]'>📁 Browse</button>
+    <button class="btn btn-purple" id="audio-add-btn" data-click="audioAdd">▲ Añadir a la cola</button>
+    <button class="btn btn-green" id="audio-to-enc-btn" data-click="audioToEncoder" title="Copia el fichero a la cola del Encoder de vídeo (encode_queue): reencoda vídeo + convierte audio">⚙ A cola de vídeo</button>
   </div>
   <div style="font-size:11px;color:var(--muted);margin-top:8px;">
     Deja MKVs en <code>C:\Media\audio_queue</code> (o usa «Añadir»): el watcher convierte
@@ -363,7 +363,7 @@
     <div class="log-body" id="audio-log-body">—</div>
   </div>
   <div class="controls">
-    <button class="btn btn-red" id="audio-btn-cancel" disabled onclick="audioCancel()">✕ Cancelar</button>
+    <button class="btn btn-red" id="audio-btn-cancel" disabled data-click="audioCancel">✕ Cancelar</button>
   </div>
 </div>
 
@@ -393,10 +393,10 @@
   <div class="file-row">
     <input class="inp" id="subs-file-input" type="text"
       placeholder="Ruta a un MKV, o Browse →" autocomplete="off">
-    <button class="btn btn-amber" onclick="openBrowser('subs')">📁 Browse</button>
-    <button class="btn btn-amber" id="subs-add-btn" onclick="subsAdd()">▲ Añadir a la cola</button>
+    <button class="btn btn-amber" data-click="openBrowser" data-args='["subs"]'>📁 Browse</button>
+    <button class="btn btn-amber" id="subs-add-btn" data-click="subsAdd">▲ Añadir a la cola</button>
     <button class="btn" id="subs-fetch-btn" style="border-color:var(--green);color:var(--green)"
-            onclick="subsFetch()">🔍 Buscar subtítulos</button>
+            data-click="subsFetch">🔍 Buscar subtítulos</button>
   </div>
   <div style="font-size:11px;color:var(--muted);margin-top:8px;">
     Deja MKVs en <code>C:\Media\subs_queue</code> (o usa «Añadir»): se pasa
@@ -424,7 +424,7 @@
     <div class="log-body" id="subs-log-body">—</div>
   </div>
   <div class="controls">
-    <button class="btn btn-red" id="subs-btn-cancel" disabled onclick="subsCancel()">✕ Cancelar</button>
+    <button class="btn btn-red" id="subs-btn-cancel" disabled data-click="subsCancel">✕ Cancelar</button>
   </div>
 </div>
 
@@ -461,7 +461,7 @@
       <option value="720p">720p</option>
       <option value="480p">480p</option>
     </select>
-    <button class="btn btn-blue" id="yt-btn-add" onclick="ytAdd()">↓ Download</button>
+    <button class="btn btn-blue" id="yt-btn-add" data-click="ytAdd">↓ Download</button>
   </div>
   <div class="title-preview" id="yt-title-preview">Paste a URL to fetch title...</div>
 </div>
@@ -486,7 +486,7 @@
     <div class="log-body" id="yt-log-body">—</div>
   </div>
   <div class="controls">
-    <button class="btn btn-red" id="yt-btn-cancel" disabled onclick="ytCancel()">✕ Cancel</button>
+    <button class="btn btn-red" id="yt-btn-cancel" disabled data-click="ytCancel">✕ Cancel</button>
   </div>
 </div>
 
@@ -504,7 +504,7 @@
       <span class="list-title">History</span>
       <div style="display:flex;gap:8px;align-items:center">
         <span class="list-count" id="yt-h-count">0</span>
-        <button class="btn btn-muted" style="font-size:10px;padding:3px 10px;" onclick="ytClearHistory()">Clear</button>
+        <button class="btn btn-muted" style="font-size:10px;padding:3px 10px;" data-click="ytClearHistory">Clear</button>
       </div>
     </div>
     <div class="list-body" id="yt-hist-list"><div class="list-item empty-item">—</div></div>
@@ -530,7 +530,7 @@
   <div class="modal-box">
     <div class="modal-header">
       <span class="modal-title" id="log-modal-title">Log</span>
-      <button class="modal-close" onclick="closeModal('log-modal')">✕</button>
+      <button class="modal-close" data-click="closeModal" data-args='["log-modal"]'>✕</button>
     </div>
     <div class="modal-body" id="log-modal-body">Loading...</div>
   </div>
@@ -541,7 +541,7 @@
   <div class="browser-modal">
     <div class="modal-header">
       <span class="modal-title">📁 Select Video File</span>
-      <button class="modal-close" onclick="closeModal('browser-modal')">✕</button>
+      <button class="modal-close" data-click="closeModal" data-args='["browser-modal"]'>✕</button>
     </div>
     <div class="browser-path" id="browser-path">C:\Media</div>
     <div class="browser-body" id="browser-body">

@@ -31,7 +31,7 @@
 function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;")
   .replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
 // escJs: para un valor que va DENTRO de un string JS entre comillas simples que a
-// su vez vive en un atributo HTML, o sea onclick="f('AQUI')".
+// su vez vive en un atributo HTML, o sea un atributo onclick con f('AQUI').
 // esc() no basta ahi porque no toca la comilla simple: "Ocean's Twelve" cerraba
 // el string y el onclick quedaba con un error de sintaxis -el boton dejaba de
 // hacer nada, en silencio-. Pasaba de verdad con los reordenar-cola y con el
@@ -125,10 +125,8 @@ async function browseTo(path){
       // decodificaba como entidad ANTES de que el JS la viera, y el clic llevaba
       // a una ruta que no existe. Es la misma función que ya usa el resto del
       // panel; aquí quedaba la última copia artesanal.
-      const click=e.type==="dir"
-        ?`browseTo('${escJs(e.path)}')`
-        :`browserSelect('${escJs(e.path)}')`;
-      return`<div class="browser-entry ${cls}" onclick="${click}">
+      const accion=e.type==="dir"?"browseTo":"browserSelect";
+      return`<div class="browser-entry ${cls}" ${acc("click",accion,e.path)}>
         <span class="browser-icon">${icon}</span>
         <span class="browser-name">${esc(e.name)}</span>
         <span class="browser-size">${e.size}</span>
@@ -317,8 +315,8 @@ function updateEnc(d){
   const queueHtml=qArr.length
     ?qArr.map((q,i)=>`<div class="list-item">
         <div class="q-actions">
-          <button class="q-btn" onclick="encQueueMove('${escJs(q.file)}','up')" ${i===0?'disabled':''}title="Move up">▲</button>
-          <button class="q-btn" onclick="encQueueMove('${escJs(q.file)}','down')" ${i===qArr.length-1?'disabled':''}title="Move down">▼</button>
+          <button class="q-btn" ${acc("click","encQueueMove",q.file,"up")} ${i===0?'disabled':''}title="Move up">▲</button>
+          <button class="q-btn" ${acc("click","encQueueMove",q.file,"down")} ${i===qArr.length-1?'disabled':''}title="Move down">▼</button>
         </div>
         <span class="item-name" title="${esc(q.display)}">${esc(q.display)}</span>
         ${q.audio_tag==="ddp_atmos"
@@ -329,7 +327,7 @@ function updateEnc(d){
         ${q.size?`<span class="item-size">${q.size}</span>`:""}
         <select class="q-modo${q.mode&&q.mode!=="auto"?" q-modo-set":""}"
                 title="Cómo se controla el bitrate de ESTA película.&#10;&#10;auto — el perfil de su resolución (hoy QVBR en las dos).&#10;ICQ — manda el GQ: da más bits a lo complejo y menos a lo fácil, pero el tamaño queda LIBRE, sin techo posible.&#10;QVBR — target previsible, pero infla las escenas fáciles hasta llenarlo.&#10;&#10;Los dos sesgos son opuestos: QVBR castiga por duración, ICQ castiga por grano.&#10;Poner Mbps implica QVBR."
-                onchange="encSetOpts('${escJs(q.file)}',{mode:this.value},this)">
+                ${acc("change","encSetOptsModo",q.file)}>
           <option value="auto"${(!q.mode||q.mode==="auto")?" selected":""}>auto</option>
           <option value="icq"${q.mode==="icq"?" selected":""}>ICQ</option>
           <option value="qvbr"${q.mode==="qvbr"?" selected":""}>QVBR</option>
@@ -337,7 +335,7 @@ function updateEnc(d){
         <input class="q-mbps${q.target_mbps?" q-mbps-set":""}" type="number" step="0.5" min="1" max="30"
                value="${q.target_mbps||""}" placeholder="auto"
                title="Bitrate de vídeo para ESTA película, en Mbps. Vacío = automático.&#10;&#10;En 4K es la única palanca real: el GQ está medido y es inerte (cuatro puntos mueven el 1,3 % del tamaño).&#10;Manda por encima del suelo de calidad y del techo de tamaño, así que es tu criterio el que decide.&#10;Referencia medida sobre material exigente: 10,5 indistinguible · 8,5 casi nada · 5,8 pérdida clara."
-               onchange="encSetOpts('${escJs(q.file)}',{target_mbps:this.value},this)">
+               ${acc("change","encSetOptsMbps",q.file)}>
       </div>`).join("")
     :'<div class="list-item empty-item">Empty</div>';
   if(queueHtml!==_encQueueHtml){ql.innerHTML=queueHtml;_encQueueHtml=queueHtml;}
@@ -388,7 +386,7 @@ async function encLoadLogs(){
       const d=new Date(l.mtime*1000);
       const t=d.toLocaleDateString("es-ES",{day:"2-digit",month:"2-digit"})+" "+d.toLocaleTimeString("es-ES",{hour:"2-digit",minute:"2-digit"});
       const icon=l.name.includes("checkfix")?"🔍":"🎬";
-      return`<div class="log-entry" onclick="openLogModal('${escJs(l.name)}','/api/enc/log/${encodeURIComponent(l.name)}')">
+      return`<div class="log-entry" ${acc("click","openLogModal",l.name,"/api/enc/log/"+encodeURIComponent(l.name))}>
         <span>${icon}</span><span class="log-entry-name">${esc(l.name)}</span>
         <span class="log-entry-time">${t}</span></div>`;
     }).join("");
@@ -571,7 +569,7 @@ function updateSync(d){
         <span class="item-badge ${esp?"badge-amber":"badge-pending"}"
               title="${esp?"Hay otro trabajo del pipeline en marcha (o una pausa global). Este espera turno; no se pierde.":""}"
               >${esp?"esperando turno":"pending"}</span>
-        <button class="item-cancel" onclick="fetch('/api/sync/cancel/${j.id}',{method:'POST'})">✕</button>
+        <button class="item-cancel" ${acc("click","postUrl","/api/sync/cancel/"+j.id)}>✕</button>
       </div>`;}).join("")
     :'<div class="list-item empty-item">Empty</div>';
 
@@ -725,7 +723,7 @@ function updateAudio(d){
     ?pending.map(j=>`<div class="sync-job-item">
         <span class="item-name">${esc(j.file)}</span>
         <span class="item-badge ${j.mode==="auto"?"badge-purple":"badge-amber"}">${j.mode==="auto"?"DDP+Atmos":"EAC3"}</span>
-        <button class="item-cancel" onclick="audioCancelJob('${escJs(j.id)}')">✕</button>
+        <button class="item-cancel" ${acc("click","audioCancelJob",j.id)}>✕</button>
       </div>`).join("")
     :(copias.length?"":'<div class="list-item empty-item">Vacía</div>')));
 
@@ -806,7 +804,7 @@ async function subsFetchPoll(){
         </div>
         <span class="item-badge" style="border-color:${col};color:${col}">${est}${err}</span>
         <button class="btn" style="padding:2px 8px;font-size:11px"
-          onclick="openLogModal('${escJs(j.name)}','/api/subs/fetch/log/${j.id}')">log</button>
+          ${acc("click","openLogModal",j.name,"/api/subs/fetch/log/"+j.id)}>log</button>
       </div>`;
     }).join("");
   }catch{}
@@ -875,7 +873,7 @@ function updateSubs(d){
     ?pending.map(j=>`<div class="sync-job-item">
         <span class="item-name">${esc(j.file)}</span>
         <span class="item-badge badge-amber">subs</span>
-        <button class="item-cancel" onclick="fetch('/api/subs/cancel/'+encodeURIComponent('${escJs(j.id)}'),{method:'POST'})">✕</button>
+        <button class="item-cancel" ${acc("click","postUrl","/api/subs/cancel/"+encodeURIComponent(j.id))}>✕</button>
       </div>`).join("")
     :(copias.length?"":'<div class="list-item empty-item">Vacía</div>')));
 
@@ -986,7 +984,7 @@ function updateYtdlp(d){
     ?pending.map(j=>`<div class="list-item">
         <span class="item-name" title="${esc(j.url)}">${esc(j.title||j.url)}</span>
         <span class="item-badge badge-blue">${esc(j.quality)}</span>
-        <button class="item-cancel" onclick="ytCancelJob('${j.id}')">✕</button>
+        <button class="item-cancel" ${acc("click","ytCancelJob",j.id)}>✕</button>
       </div>`).join("")
     :'<div class="list-item empty-item">Empty</div>';
 
@@ -1000,7 +998,7 @@ function updateYtdlp(d){
         return`<div class="log-entry">
           <span class="${ok?"tick-ok":"tick-err"}">${ok?"✓":"✗"}</span>
           <span class="log-entry-name" style="color:${ok?"var(--text)":"var(--red)"}">${esc(j.title||j.url)}</span>
-          <button class="item-cancel" onclick="openLogModal('${escJs(j.title||j.id)}','/api/ytdlp/log/${j.id}')" title="View log">📋</button>
+          <button class="item-cancel" ${acc("click","openLogModal",j.title||j.id,"/api/ytdlp/log/"+j.id)} title="View log">📋</button>
         </div>`;
       }).join("")
     :'<div class="list-item empty-item">No finished jobs</div>';
@@ -1013,7 +1011,7 @@ function updateYtdlp(d){
     ?hItems.map(h=>{
         const ok=h.status==="done";
         const logBtn=h.log_file
-          ?`<button class="item-cancel" onclick="openLogModal('${escJs(h.title||h.id)}','/api/ytdlp/log/${h.id}')" title="Log">📋</button>`:"";
+          ?`<button class="item-cancel" ${acc("click","openLogModal",h.title||h.id,"/api/ytdlp/log/"+h.id)} title="Log">📋</button>`:"";
         return`<div class="list-item">
           <span class="${ok?"tick-ok":"tick-err"}">${ok?"✓":"✗"}</span>
           <span class="item-name" title="${esc(h.url)}">${esc(h.title||h.url)}</span>
@@ -1102,9 +1100,9 @@ function rmxRenderSlots(){
     <div class="file-row" style="margin-bottom:6px">
       <input class="inp cyan" id="rmx-in-${i}" type="text" value="${esc(p)}"
              placeholder="Ruta del fichero ${i+1}" autocomplete="off"
-             oninput="rmxSlots[${i}]=this.value">
-      <button class="btn btn-amber" onclick="openBrowser('remux${i}')">📁</button>
-      ${rmxSlots.length>1?`<button class="btn btn-red" onclick="rmxDelSlot(${i})">✕</button>`:``}
+             ${acc("input","rmxSetSlot",i)}>
+      <button class="btn btn-amber" ${acc("click","openBrowser","remux"+i)}>📁</button>
+      ${rmxSlots.length>1?`<button class="btn btn-red" ${acc("click","rmxDelSlot",i)}>✕</button>`:``}
     </div>`).join("");
 }
 function rmxAddSlot(){ if(rmxSlots.length<6){ rmxSlots.push(""); rmxRenderSlots(); } }
@@ -1181,14 +1179,14 @@ function rmxRow(fi,t){
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
         <label style="display:flex;gap:10px;align-items:center;cursor:pointer;flex:1">
           <input type="radio" name="rmxvid" ${sel?"checked":""}
-                 onchange="rmxVideo={fi:${fi},index:${t.index}};rmxRender()">
+                 ${acc("change","rmxSetVideo",fi,t.index)}>
           <span class="stream-type-badge">Vídeo</span>
           <span>${rmxDesc(t)}</span>
           <span style="color:var(--dim);font-size:12px">${t.fps||""}</span>
         </label>
         ${sel?`<label style="font-size:12px;color:var(--pink)" title="Al acabar el remux, la salida entra sola en la cola del encoder (C:\\Media\\encode_queue). El audio ya convertido y los subtítulos ya en SRT se copian, no se reprocesan.">
           <input type="checkbox" ${rmxEncodeAfter?"checked":""}
-                 onchange="rmxEncodeAfter=this.checked;rmxRender()">
+                 ${acc("change","rmxSetEncodeAfter")}>
           → encodear vídeo al terminar</label>`:``}
       </div></div>`;
   }
@@ -1204,32 +1202,32 @@ function rmxRow(fi,t){
   // intencionado como si lo lleva rmxDesc().
   return `<div class="stream-row" style="padding:8px 10px">
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-      <input type="checkbox" ${on?"checked":""} onchange="rmxToggle(${fi},${t.index},this.checked)">
+      <input type="checkbox" ${on?"checked":""} ${acc("change","rmxToggleTrack",fi,t.index)}>
       <span class="stream-type-badge ${t.type==="audio"?"stream-type-audio":""}">${t.type==="audio"?"Audio":"Sub"}</span>
       <span style="min-width:190px">${rmxDesc(t)}</span>
       <span style="color:var(--dim);font-size:12px;flex:1">${esc(t.title||"")}</span>
       ${on?`
         <input class="inp" style="width:60px;padding:5px 7px;font-size:12px" value="${esc(p.lang||"")}"
-               oninput="rmxPick['${k}'].lang=this.value" title="Idioma">
+               ${acc("input","rmxSetCampo",k,"lang")} title="Idioma">
         <input class="inp" style="width:150px;padding:5px 7px;font-size:12px" value="${esc(p.title||"")}"
-               oninput="rmxPick['${k}'].title=this.value" placeholder="título">
+               ${acc("input","rmxSetCampo",k,"title")} placeholder="título">
         <label style="font-size:12px"><input type="checkbox" ${p.def?"checked":""}
-               onchange="rmxPick['${k}'].def=this.checked"> default</label>
+               ${acc("change","rmxSetCheck",k,"def",false)}> default</label>
         <label style="font-size:12px"><input type="checkbox" ${p.forced?"checked":""}
-               onchange="rmxPick['${k}'].forced=this.checked"> forced</label>
+               ${acc("change","rmxSetCheck",k,"forced",false)}> forced</label>
         <input class="inp" style="width:82px;padding:5px 7px;font-size:12px" type="number" value="${p.sync_ms}"
-               oninput="rmxPick['${k}'].sync_ms=parseInt(this.value||0)" title="Desfase en ms">
+               ${acc("input","rmxSetSync",k)} title="Desfase en ms">
         ${!isBase?`<button class="btn btn-cyan" style="padding:5px 9px;font-size:12px"
-               onclick="rmxMeasure(${fi},${t.index})">⇌ Medir</button>`:``}
+               ${acc("click","rmxMeasure",fi,t.index)}>⇌ Medir</button>`:``}
         ${(t.type==="audio"&&t.nativo===false)?`<label style="font-size:12px;color:var(--amber)"
                title="${t.objects?"Conserva los objetos Atmos (JOC). Pasa por DEE: varios minutos.":"El TV no decodifica este códec; copiarlo hace que Plex transcodifique en cada reproducción."}">
                <input type="checkbox" ${p.convert?"checked":""}
-               onchange="rmxPick['${k}'].convert=this.checked?'${t.objects?"ddp_atmos":"ddp"}':null;rmxRender()">
+               ${acc("change","rmxSetConvert",k,t.objects?"ddp_atmos":"ddp")}>
                → DD+${t.objects?" Atmos":""}</label>`:``}
         ${(t.type==="subtitle"&&t.srtable&&!t.srt)?`<label style="font-size:12px;color:var(--amber)"
                title="${t.ocr?"OCR con PgsToSrt: varios minutos por pista":"conversión con ffmpeg: segundos"}">
                <input type="checkbox" ${p.to_srt?"checked":""}
-               onchange="rmxPick['${k}'].to_srt=this.checked;rmxRender()">
+               ${acc("change","rmxSetCheck",k,"to_srt",true)}>
                → SRT${t.ocr?" (OCR)":""}</label>`:``}
         ${(t.type==="subtitle"&&!t.srtable&&!t.srt)?`<span style="font-size:12px;color:var(--red)"
                title="PgsToSrt solo entiende PGS">no convertible, se copia tal cual</span>`:``}
@@ -1640,7 +1638,7 @@ async function rmxPoll(){
           <span style="color:var(--${col});font-weight:600;min-width:80px">${esc(j.status)}</span>
           <span style="flex:1">${esc(j.name)}</span>
           ${["queued","waiting","running"].includes(j.status)
-            ? `<button class="item-cancel" onclick="fetch('/api/remux/cancel/${j.id}',{method:'POST'})">✕</button>`:``}
+            ? `<button class="item-cancel" ${acc("click","postUrl","/api/remux/cancel/"+j.id)}>✕</button>`:``}
         </div>
         <div style="color:var(--dim);font-size:12px;margin-top:3px">${esc(j.last_log||"")}</div>
         ${bar}
@@ -1727,3 +1725,56 @@ setInterval(()=>{ _rmxTick++; if(currentTab==="remux"||_rmxTick%5===0) rmxPoll()
 rmxRenderSlots();
 rmxPoll();
 
+
+// ── Acciones de la interfaz ─────────────────────────────────────────────────
+// Ningun atributo on* en el HTML: la CSP del panel no admite scripts en linea.
+// Cada control lleva data-click / data-change / data-input con el nombre de su
+// accion, y sus argumentos como JSON en data-args. Solo se ejecutan las acciones
+// de la lista ACCIONES; un atributo con otro nombre no hace nada.
+function acc(evento, fn, ...args){
+  return `data-${evento}="${fn}" data-args="${esc(JSON.stringify(args))}"`;
+}
+function postUrl(url){ fetch(url, {method: "POST"}); }
+function encSetOptsModo(file){ return encSetOpts(file, {mode: this.value}, this); }
+function encSetOptsMbps(file){ return encSetOpts(file, {target_mbps: this.value}, this); }
+function encSetHoldThis(){ return encSetHold(this.checked); }
+function rmxSetSlot(i){ rmxSlots[i] = this.value; }
+function rmxSetVideo(fi, index){ rmxVideo = {fi, index}; rmxRender(); }
+function rmxSetEncodeAfter(){ rmxEncodeAfter = this.checked; rmxRender(); }
+function rmxToggleTrack(fi, ix){ rmxToggle(fi, ix, this.checked); }
+function rmxSetCampo(k, campo){ rmxPick[k][campo] = this.value; }
+function rmxSetCheck(k, campo, redibujar){
+  rmxPick[k][campo] = this.checked;
+  if(redibujar) rmxRender();
+}
+function rmxSetSync(k){ rmxPick[k].sync_ms = parseInt(this.value || 0); }
+function rmxSetConvert(k, tipo){
+  rmxPick[k].convert = this.checked ? tipo : null;
+  rmxRender();
+}
+const ACCIONES = {
+  switchTab, closeModal, openLogModal, openBrowser, browseTo, browserSelect,
+  encKill, encSkip, encResume, encDismissError, encSetHoldThis, encQueueMove,
+  encSetOptsModo, encSetOptsMbps, audioCancelJob,
+  rmxAddSlot, rmxDelSlot, rmxSetSlot, rmxProbe, rmxSetVideo, rmxSetEncodeAfter,
+  rmxToggleTrack, rmxSetCampo, rmxSetCheck, rmxSetSync, rmxSetConvert, rmxMeasure,
+  rmxLaunch, sanAnalizar, sanRun,
+  syncProbe, syncAdd, syncCancel,
+  audioAdd, audioToEncoder, audioCancel,
+  subsAdd, subsFetch, subsCancel,
+  ytAdd, ytCancel, ytCancelJob, ytClearHistory,
+  postUrl,
+};
+function despachar(ev, atributo){
+  const el = ev.target.closest(`[${atributo}]`);
+  if(!el) return;
+  const fn = ACCIONES[el.getAttribute(atributo)];
+  if(!fn) return;
+  let args = [];
+  try { args = JSON.parse(el.getAttribute("data-args") || "[]"); }
+  catch { return; }
+  fn.apply(el, args);
+}
+document.addEventListener("click", ev => despachar(ev, "data-click"));
+document.addEventListener("change", ev => despachar(ev, "data-change"));
+document.addEventListener("input", ev => despachar(ev, "data-input"));
