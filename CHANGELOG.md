@@ -4,6 +4,30 @@ Formato libre por sesión de trabajo (no SemVer: esto es un pipeline casero,
 no una librería versionada). Cada entrada resume el `TRASPASO_*.md`
 correspondiente, que queda en la raíz con el detalle completo.
 
+## 2026-10-06 — Revisión de encode.ps1: guarda de salida truncada, techo único y comentarios
+
+- **Guarda de salida por DURACIÓN, no por tamaño.** Antes se borraba la salida
+  si pesaba menos del 5 % de la fuente, y eso mide compresión, no truncado: el
+  mínimo real del histórico ya iba al 11 % (*Juego de Tronos* S08E06, 92 Mbps
+  de fuente) y un 4K de animación en ICQ podía bajar del 5 % y perder un encode
+  bueno. Ahora salta si la salida dura menos del 98 % de la fuente (o si no se
+  puede leer su duración). Error en el panel: «Salida truncada». Probado con un
+  MKV completo (no salta), uno cortado a 3 s (salta) y uno inexistente (salta).
+- **`$CeilGb` en un solo sitio**, justo después de decidir la resolución. Estaba
+  escrito dos veces (reserva de disco del camino solapado y cadena de bitrate).
+- **Comentarios con datos falsos corregidos**: «20 % por punto de GQ» (medido:
+  10-13 % en 4K), «techo de 13GB/10GB» (es 16/12), «solo corre un encode a la
+  vez» (hay dos ranuras) y cuatro referencias a números de línea que ya no
+  apuntaban ahí.
+- Sin cambios de bitrate, GQ ni filtros: el bitstream no cambia.
+- Batería (`pruebas\`, fuera de git): `revisar-ficheros.ps1` daba como corruptos
+  los XML de tarea en UTF-16 (`tandas-keepalive.xml`, CR=48 estando sano):
+  contaba bytes y en UTF-16 cada CRLF es `\r \0 \n \0`. Ahora decodifica si hay
+  BOM FF FE; probado que sigue cazando un CR suelto en UTF-16 y en ASCII. Los
+  tres avisos «TryParse sin cultura» del código de HDR dinámico y sync A/V del
+  06/10 aceptados con motivo (dos pasan la cultura en `$inv`; el otro es un
+  entero). Resultado: 15 de 15 en verde.
+
 ## 2026-10-05 — Higiene de scripts, unificación de $PsExe y robustez de auditoría
 
 - **Unificación de `$PsExe` (PowerShell 7)**: centralizada la resolución de `$PsExe` en `mediabox-paths.ps1` priorizando la ruta absoluta a `pwsh.exe` frente a `(Get-Process -Id $PID).Path`. Aplicado en `sanear.ps1`, `audio_compat.ps1`, `audio_recap.ps1` y `atmos-farm.ps1` para blindarlos contra caídas accidentales a PS 5.1.

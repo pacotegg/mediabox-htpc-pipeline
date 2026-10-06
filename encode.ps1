@@ -284,7 +284,9 @@ $CfgPerfil4K    = 'icq-red'
 $IcqRedHolgura = 1.03
 #
 #  GQ de cada rama en modo 'icq'. En QSV un GQ MAS ALTO = MENOS calidad y
-#  menos bitrate; cada punto vale del orden del 20 % de bitrate.
+#  menos bitrate. Cada punto mueve del orden del 10-13 % en 4K (medido el
+#  21/09/2026 en El Bueno El Feo Y El Malo, ver abajo); el "20 %" que decia
+#  aqui no tenia medicion detras.
 #  MEDIDO el 22/08/2026 (ver la memoria 'icq-puro-vs-bv-iman'):
 #    4K   : GQ 18 salio indistinguible de la config vieja a ojo, y sobre 6
 #           peliculas ORIGINALES de la biblioteca ahorra un 19,5 % (El reino
@@ -669,7 +671,8 @@ function Exit-Requeue([string]$Motivo) {
 
 # Ficheros de estado con nombre FIJO: el panel (app.py) los lee por estas rutas
 # exactas para mostrar progreso en vivo y para que funcionen Stop/Skip.
-# (Solo corre un encode a la vez, asi que no hay riesgo de colision.)
+# Desde el 04/09/2026 puede haber dos encodes a la vez: cada ranura usa su
+# propio prefijo (ver -Slot), asi que no colisionan.
 # Ficheros de estado. En modo SubsOnly usan su propio prefijo: si no, un trabajo
 # de subtitulos escribiria en encode_status y apareceria en la pestana Encoder
 # del panel, pisando el estado del pipeline de video.
@@ -769,6 +772,11 @@ $Downscale8K = $false
 if     ($Width -ge 7600 -or $Height -ge 4000) { $Res = "4K"; $Downscale8K = $true }
 elseif ($Width -ge 3800 -or $Height -ge 1700) { $Res = "4K" }
 else                                          { $Res = "1080p" }
+
+# Techo de TAMANO del fichero (GB). Una sola definicion: la usan la reserva de
+# disco del camino solapado y la cadena de bitrate. 1080p: 10 -> 12 el
+# 07/08/2026, o el techo anularia el target nuevo en metrajes largos.
+$CeilGb = if ($Res -eq "4K") { 16.0 } else { 12.0 }
 
 # 22/08/2026: derivado del perfil de ESTA resolucion (arriba, junto a
 # $ParallelAudioVideo). $true = se ponen -b:v/-maxrate/-bufsize; $false = ICQ puro.
@@ -891,7 +899,7 @@ if ($VerifySource -ne "off") {
     # Aqui la duracion YA se conoce, asi que el panel puede pintar la barra.
     # Esta fase decodifica el fichero (entero si VerifySource='full'), o sea
     # minutos de trabajo real sin nada que mostrar si no se reporta.
-    # SIN fps_src a proposito: se calcula mas abajo (L576) y aqui saldria vacio.
+    # SIN fps_src a proposito: se calcula mas abajo ($FpsSrc) y aqui saldria vacio.
     # En esta fase no hace falta: el % viene de encode_status, no de fotogramas.
     WriteNoBom $StatusFile "status=encoding`nfile=$CleanName.mkv`nduration=$Duration`nstage=verificando`npct=0"
     $vWhere = ""
@@ -1255,12 +1263,12 @@ if ($SubsOnly) {
     foreach ($p in $AudioPlan) { $p.Action = 'copy'; $p.Keep = $true }
     Log "SubsOnly: video y audio intactos (copy, sin descartar pistas). Solo se procesan los subtitulos."
 
-    # La red de ICQ (linea ~785) no mira $SubsOnly: en este modo el video va en
+    # La red de ICQ ($IcqRed, junto a $CfgPerfil) no mira $SubsOnly: en este modo el video va en
     # -c:v copy, asi que no hay pasada ICQ que medir ni "techo" al que repetir.
     # $IcqRed seguia a $true (viene del perfil 'icq-red', el de 1080p y 4K por
     # defecto) y al terminar la copia se llamaba a $MedirVideoIcq, que solo se
-    # define en la rama de encode NORMAL (dentro de $BuildVideoEncArgs, ver
-    # linea ~2747): PowerShell no encuentra el scriptblock e
+    # define en la rama de encode NORMAL (junto a $BuildVideoEncArgs):
+    # PowerShell no encuentra el scriptblock e
     # 'InvalidOperation' tumba el trabajo DESPUES de que ffmpeg ya termino la
     # copia -sin reconstruir el contenedor, sin anotar completed.jsonl, sin
     # devolver el estado a 'idle'-. Roto desde que la red se activo el
@@ -1353,7 +1361,7 @@ function Complete-DdpPhase {
             # OJO: la pista se queda con Action='ddp'. NO se le pone un estado
             # nuevo tipo 'ddp_done': el constructor de mapas de mas abajo decide
             # con 'Action -eq ddp' si mete el .ec3 como entrada y si lo copia
-            # (lineas ~1266 y ~1290), asi que cambiarlo la habria dejado FUERA del
+            # (ver $BuildAudioMaps), asi que cambiarlo la habria dejado FUERA del
             # muxeo final. Que el bucle secuencial no la repita se resuelve
             # filtrando por $AtmosEc3, que es el registro de "ya convertida".
         } elseif ($r.Failure -eq 'diskfull') {
@@ -1447,8 +1455,7 @@ if ($ParaleloAV) {
     # 4K y 12 en 1080p. Sale generoso a proposito -el fichero real suele ocupar
     # la mitad- porque aqui el margen vale mas que la exactitud.
     $VidTmp  = Join-Path $BigTmp ("vid_{0}.mkv" -f $TmpTag)
-    $ceilGb  = if ($Res -eq '4K') { 16.0 } else { 12.0 }   # el MISMO $CeilGb de mas abajo
-    $vidNeed = [long]($ceilGb * 1GB * 1.15) + 2GB
+    $vidNeed = [long]($CeilGb * 1GB * 1.15) + 2GB
     Log "  Audio y video EN PARALELO: $($tracks.Count) pista(s) de audio en segundo plano."
     # SIN -OnProgress a proposito: mientras el video encodea, el unico que puede
     # escribir en encode_status es el video. Ver app.py:450, donde un stage
@@ -1759,7 +1766,7 @@ if ($Target -lt $QFloor) { $Target = $QFloor }
 #   - y es lo que consulta la guarda de ICQ de mas abajo, que necesita saber si
 #     ha intervenido alguna regla que ICQ no sabe respetar.
 $quien = 'tabla de targets'
-$CeilGb = if ($Res -eq "4K") { 16.0 } else { 12.0 }   # 1080p: 10 -> 12 el 07/08/2026, o el techo anularia el target nuevo en metrajes largos
+# ($CeilGb se define justo despues de decidir $Res: 16 GB en 4K, 12 en 1080p.)
 $maxVideo = ($CeilGb * 8 * 1GB / $Duration) / 1e6 - $AudioMbps
 # Limite de la red de 'icq-red': el techo de tamano es la primera regla dura.
 # Se afina mas abajo con "nunca mas que la fuente". El suelo y la tabla no
@@ -1951,7 +1958,7 @@ if ($TargetMbps -gt 0) {
 }
 
 # Margen de pico para QVBR, POR RESOLUCION: el 4K se beneficia de mas pico en
-# escenas complejas (y hay hueco de sobra hasta el ceiling de 13GB); el 1080p
+# escenas complejas (y hay hueco hasta el techo de $CeilGb); el 1080p
 # ya va holgado a su target y no necesita picos tan altos, asi que va mas
 # ajustado. En QVBR el tamano flota por complejidad; esto es el TOPE DE PICO,
 # no la media. Sube/baja estos factores para tunear (mas = mas margen y
@@ -1998,7 +2005,7 @@ if ($IcqRed) {
 # los 9M de maxrate, o sea alcanzaba la calidad pedida y sobraba techo). Bajado 1
 # punto en cada rama respecto al ajuste anterior (era 16/19/19/20) para que QVBR
 # aproveche ese margen y suba calidad. Sube el tamano del fichero, pero sigue
-# acotado por maxrate y por el techo de 13GB/10GB. Si en tu TV aun quieres mas,
+# acotado por maxrate y por el techo de $CeilGb (16/12 GB). Si en tu TV aun quieres mas,
 # baja otro punto (menor GQ = mas calidad y mas tamano).
 # 02/08: la rama 4K SDR baja de 18 a 16. Motivo: al comparar Mandalorian y El dia
 # de la revelacion encodeadas dos veces (26/07 desde fuente HDR, 01/08 desde fuente
@@ -3233,10 +3240,18 @@ if ($VidTmp) { Remove-Item -LiteralPath $VidTmp -Force -ErrorAction SilentlyCont
 
 if ($ExitCode -eq 0 -and (Test-Path -LiteralPath $Output)) {
     $outBytes = (Get-Item -LiteralPath $Output).Length
-    if ($outBytes -lt ($SourceBytes * 0.05)) {
-        Log "ERROR: output too small - source may be corrupt"
+    # Salida TRUNCADA, medida por DURACION (06/10/2026). Antes se miraba el
+    # tamano (< 5 % de la fuente), y eso no mide truncado: mide compresion. El
+    # minimo real del historico ya iba al 11 % (Juego de Tronos S08E06, 92 Mbps
+    # de fuente) y un 4K de animacion en ICQ podia bajar del 5 % y perder un
+    # encode bueno. Una duracion ilegible (0) cuenta como truncada.
+    $outDur = 0.0
+    $null = [double]::TryParse((Probe "" "format=duration" $Output), [System.Globalization.NumberStyles]::Float,
+                               [System.Globalization.CultureInfo]::InvariantCulture, [ref]$outDur)
+    if ($outDur -lt ($Duration * 0.98)) {
+        Log ("ERROR: salida truncada: dura {0:N0} s y la fuente {1} s - la fuente puede estar danyada" -f $outDur, $Duration)
         Remove-Item -LiteralPath $Output -ErrorAction SilentlyContinue
-        WriteNoBom $StatusFile "status=error`nfile=$(Split-Path $Output -Leaf)`nduration=$Duration`nerror=Output too small"
+        WriteNoBom $StatusFile "status=error`nfile=$(Split-Path $Output -Leaf)`nduration=$Duration`nerror=Salida truncada"
         Remove-Item -LiteralPath $OutMarker -ErrorAction SilentlyContinue
         exit 1
     }
