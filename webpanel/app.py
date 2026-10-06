@@ -7,7 +7,7 @@ CAMBIOS v2:
   - Campo subs_dropped expuesto en el listado de "Completed".
   - File browser arranca en BASE (Windows) en vez de "~".
 """
-from flask import Flask, render_template, jsonify, Response, request, make_response
+from flask import Flask, render_template, jsonify, Response, request, make_response, redirect
 import os, sys, glob, json, signal, time, subprocess, threading, uuid, re, shutil, collections
 import ctypes
 from datetime import datetime
@@ -48,6 +48,7 @@ app.config["TEMPLATES_AUTO_RELOAD"] = True
 # Las lecturas (GET) no se tocan: no cambian nada y bloquearlas solo estorbaria.
 from urllib.parse import urlparse
 import ipaddress, socket
+import auth
 
 _METODOS_SEGUROS = {"GET", "HEAD", "OPTIONS"}
 
@@ -155,13 +156,32 @@ def _url_permitida(url):
     return p.scheme in ("http", "https") and bool(p.netloc) and not url.startswith("-")
 
 
+def _ip_cliente():
+    """IP real del navegador. El panel escucha solo en 127.0.0.1 y llega por el
+    proxy HTTPS de Caddy, que pone la IP de origen en X-Forwarded-For. Solo se
+    cree esa cabecera si la conexion viene de loopback (o sea, del proxy)."""
+    ip = request.remote_addr or ""
+    if ip in ("127.0.0.1", "::1"):
+        xff = request.headers.get("X-Forwarded-For")
+        if xff:
+            return xff.split(",")[0].strip()
+    return ip
+
+
+def _trato_local():
+    """Peticion directa desde esta misma maquina (scripts, pruebas, la propia
+    pantalla del HTPC): no pasa por el proxy, asi que no lleva X-Forwarded-For."""
+    return request.remote_addr in ("127.0.0.1", "::1") and not request.headers.get("X-Forwarded-For")
+
+
 @app.before_request
 def _guarda_de_entrada():
-    # 0) DE DONDE VIENE la conexion TCP (solo localhost, LAN privada o Tailscale).
-    if request.remote_addr and not _es_ip_segura(request.remote_addr):
+    # 0) DE DONDE VIENE la conexion (solo localhost, LAN privada o Tailscale).
+    ip = _ip_cliente()
+    if ip and not _es_ip_segura(ip):
         return jsonify({
             "ok": False,
-            "error": "Acceso denegado: IP publica no autorizada (%s)." % request.remote_addr
+            "error": "Acceso denegado: IP publica no autorizada (%s)." % ip
         }), 403
 
     # 1) DE QUE NOMBRE dicen que vienen (para todo, tambien las lecturas).
@@ -169,7 +189,7 @@ def _guarda_de_entrada():
         return jsonify({
             "ok": False,
             "error": "Peticion rechazada: este panel no responde al nombre «%s». "
-                     "Entra por su IP (p. ej. http://192.168.31.16:8080) o anyade "
+                     "Entra por su IP (p. ej. https://192.168.31.16:8443) o anyade "
                      "el nombre a la variable de entorno MEDIABOX_HOSTS y reinicia "
                      "el panel. Permitidos ahora: %s, o IP local/Tailscale."
                      % (request.host, ", ".join(sorted(_HOST_NOMBRES_OK)))}), 403
@@ -188,6 +208,68 @@ def _guarda_de_entrada():
         "error": "Peticion rechazada: viene de %s, que no es este panel. "
                  "El panel solo acepta escrituras desde su propia pagina."
                  % origen}), 403
+
+
+@app.before_request
+def _exigir_sesion():
+    """Todo lo que llega por el proxy necesita sesion. Lo que llega directo desde
+    esta maquina (scripts y pruebas locales) no la necesita: quien ya tiene
+    acceso al equipo puede leer los ficheros del panel de todos modos."""
+    if request.path == "/login" or request.path == "/logout" or request.path.startswith("/static/"):
+        return None
+    if _trato_local():
+        return None
+    if auth.validar_sesion(request.cookies.get(auth.COOKIE)):
+        return None
+    if request.path.startswith("/api/") or request.path == "/stream":
+        return jsonify({"ok": False, "error": "Sesion caducada o sin iniciar", "login": True}), 401
+    return redirect("/login")
+
+
+def _https_entrada():
+    return request.headers.get("X-Forwarded-Proto") == "https" or request.is_secure
+
+
+@app.route("/login", methods=["GET"])
+def login_pagina():
+    return render_template("login.html", configurado=auth.hay_usuario())
+
+
+@app.route("/login", methods=["POST"])
+def login_entrar():
+    j = request.get_json(silent=True) or {}
+    usuario = str(j.get("usuario") or "")[:100]
+    clave = str(j.get("password") or "")[:256]
+    ip = _ip_cliente()
+    if auth.bloqueado(ip):
+        return jsonify({"ok": False, "error": "Demasiados intentos. Espera 15 minutos."}), 429
+    if not auth.hay_usuario():
+        return jsonify({"ok": False, "error": "No hay usuario creado. Ejecuta crear_usuario.py."}), 503
+    if not auth.comprobar(usuario, clave):
+        auth.registrar_fallo(ip)
+        return jsonify({"ok": False, "error": "Usuario o contrasena incorrectos."}), 401
+    auth.limpiar_fallos(ip)
+    token = auth.crear_sesion(ip, request.headers.get("User-Agent"))
+    resp = jsonify({"ok": True})
+    resp.set_cookie(auth.COOKIE, token, max_age=auth.DURACION, httponly=True,
+                    samesite="Strict", secure=_https_entrada(), path="/")
+    return resp
+
+
+@app.route("/logout", methods=["POST"])
+def logout():
+    auth.revocar_sesion(request.cookies.get(auth.COOKIE))
+    resp = jsonify({"ok": True})
+    resp.delete_cookie(auth.COOKIE, path="/", samesite="Strict", secure=_https_entrada())
+    return resp
+
+
+@app.route("/logout-todas", methods=["POST"])
+def logout_todas():
+    auth.revocar_todas()
+    resp = jsonify({"ok": True})
+    resp.delete_cookie(auth.COOKIE, path="/", samesite="Strict", secure=_https_entrada())
+    return resp
 
 
 # ── Cabeceras de seguridad en TODA respuesta ─────────────────────────────────
@@ -4090,4 +4172,5 @@ threading.Thread(target=_queues_saver, daemon=True).start()
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080, threaded=True)
+    # Solo loopback: el acceso entra por el proxy HTTPS de Caddy (ver auth.py).
+    app.run(host="127.0.0.1", port=8080, threaded=True)

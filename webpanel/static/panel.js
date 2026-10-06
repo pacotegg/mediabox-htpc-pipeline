@@ -1078,6 +1078,7 @@ function connect(){
   };
   evtSource.onerror=()=>{
     conn.className="dead";conn.textContent="● DISCONNECTED";
+    fetch("/api/enc/status").then(r=>{ if(r.status===401) location.href="/login"; }).catch(()=>{});
     evtSource.close();setTimeout(connect,3000);
   };
 }
@@ -1735,6 +1736,7 @@ function acc(evento, fn, ...args){
   return `data-${evento}="${fn}" data-args="${esc(JSON.stringify(args))}"`;
 }
 function postUrl(url){ fetch(url, {method: "POST"}); }
+function cerrarSesion(){ fetch("/logout", {method: "POST"}).finally(() => { location.href = "/login"; }); }
 function encSetOptsModo(file){ return encSetOpts(file, {mode: this.value}, this); }
 function encSetOptsMbps(file){ return encSetOpts(file, {target_mbps: this.value}, this); }
 function encSetHoldThis(){ return encSetHold(this.checked); }
@@ -1763,7 +1765,7 @@ const ACCIONES = {
   audioAdd, audioToEncoder, audioCancel,
   subsAdd, subsFetch, subsCancel,
   ytAdd, ytCancel, ytCancelJob, ytClearHistory,
-  postUrl,
+  postUrl, cerrarSesion,
 };
 function despachar(ev, atributo){
   const el = ev.target.closest(`[${atributo}]`);

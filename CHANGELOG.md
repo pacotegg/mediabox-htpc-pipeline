@@ -4,6 +4,27 @@ Formato libre por sesión de trabajo (no SemVer: esto es un pipeline casero,
 no una librería versionada). Cada entrada resume el `TRASPASO_*.md`
 correspondiente, que queda en la raíz con el detalle completo.
 
+## 2026-10-06 — Acceso al webpanel: contraseña y HTTPS por la LAN
+
+- **Usuario y contraseña.** Un solo usuario. La contraseña se guarda como hash
+  scrypt en `webpanel/auth.json` (gitignored) y se crea en la terminal con
+  `webpanel/crear_usuario.py`, sin eco. Mínimo 12 caracteres.
+- **Sesión de 30 días por dispositivo**, renovada con el uso (no caduca a los 10
+  min: el panel vigila encodes de horas por SSE). Cookie `HttpOnly` y
+  `SameSite=Strict`; el token se guarda en `sesiones.json` como hash. Botón
+  «Salir» y `/logout-todas`. Cambiar la contraseña cierra todas las sesiones.
+- **Límite de intentos:** 5 fallos por IP cada 15 min.
+- **El panel escucha solo en `127.0.0.1`.** La entrada es HTTPS por Caddy en
+  `https://192.168.31.16:8443`, con certificado interno (`tls internal`) y bind
+  solo a la IP de la LAN. Caddy pasa la IP real en `X-Forwarded-For`. El
+  `Caddyfile` de la casa no se ha tocado: el bloque está en la conversación y se
+  valida con `caddy validate`.
+- **Acceso directo desde esta maquina** (scripts, pruebas) no pide sesion: sin
+  cabecera de proxy, se trata como local.
+- Probado: 25 comprobaciones con el cliente de Flask (login, 429, cookie, token
+  en hash, caducidad, logout, IP publica y Host ajeno) y el flujo de login y
+  salir en el navegador, con credenciales temporales que se borraron.
+
 ## 2026-10-06 — Seguridad del webpanel: rutas permitidas, yt-dlp, PID y cola
 
 - **Rutas acotadas.** El panel solo acepta rutas dentro de `E:\`, `C:\Media` y

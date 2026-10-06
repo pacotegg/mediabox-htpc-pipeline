@@ -60,3 +60,9 @@ thrillers_que_faltan.md
 
 # --- Config local de Claude Code (permisos de esta máquina) ---
 .claude/settings.local.json
+
+# Panel web: credenciales y sesiones (nunca al repo)
+webpanel/auth.json
+webpanel/auth.json.tmp
+webpanel/sesiones.json
+webpanel/sesiones.json.tmp

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MEDIABOX · Entrar</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='panel.css') }}">
+</head>
+<body class="login-body">
+<main class="login-caja">
+  <h1 class="login-titulo">MEDIABOX</h1>
+  {% if configurado %}
+  <form id="login-form" autocomplete="on">
+    <label class="login-campo">Usuario
+      <input class="inp" id="login-usuario" name="username" autocomplete="username" required autofocus>
+    </label>
+    <label class="login-campo">Contrasena
+      <input class="inp" id="login-clave" name="password" type="password" autocomplete="current-password" required>
+    </label>
+    <button class="btn btn-cyan login-boton" type="submit">Entrar</button>
+    <p id="login-error" class="login-error" role="alert"></p>
+  </form>
+  {% else %}
+  <p class="login-error" role="alert">No hay usuario creado. En el HTPC, ejecuta
+    <code>python C:\scripts\webpanel\crear_usuario.py</code> en una terminal.</p>
+  {% endif %}
+</main>
+<script src="{{ url_for('static', filename='login.js') }}"></script>
+</body>
+</html>

@@ -509,3 +509,11 @@ main{padding:24px 32px;max-width:1600px;margin:0 auto;display:flex;flex-directio
             text-transform: uppercase; color: var(--muted); white-space: nowrap; }
 .slot-name { font-family: var(--sans); font-size: 18px; font-weight: 700; color: var(--white);
              min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── Pantalla de entrada ─────────────────────────────────────────────── */
+.login-body { min-height: 100vh; margin: 0; display: flex; align-items: center; justify-content: center; }
+.login-caja { width: min(360px, 90vw); padding: 28px; border: 1px solid var(--border, #2a3346); border-radius: 12px; background: var(--panel, #11162a); }
+.login-titulo { margin: 0 0 18px; text-align: center; letter-spacing: .2em; font-size: 22px; }
+.login-campo { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; font-size: 13px; }
+.login-boton { width: 100%; margin-top: 6px; }
+.login-error { color: var(--red, #ff5c7a); font-size: 13px; min-height: 1em; margin: 12px 0 0; }
